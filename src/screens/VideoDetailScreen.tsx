@@ -1,4 +1,4 @@
-import React, {useEffect, useMemo, useState} from 'react';
+import React, {ReactNode, useEffect, useMemo, useState} from 'react';
 import {
   Alert,
   Image,
@@ -10,6 +10,20 @@ import {
   Text,
   View,
 } from 'react-native';
+import {
+  Captions,
+  Download,
+  ExternalLink,
+  Heart,
+  Info,
+  Play,
+  RefreshCw,
+  RotateCcw,
+  Share2,
+  Star as StarIcon,
+  Tags,
+  Users,
+} from 'lucide-react-native';
 import {NativeStackScreenProps} from '@react-navigation/native-stack';
 import {useQuery} from '@tanstack/react-query';
 import {
@@ -17,13 +31,11 @@ import {
   Card,
   EmptyState,
   ErrorState,
-  KeyValueRow,
   LoadingState,
   PrimaryButton,
   Screen,
   SegmentedControl,
   TextButton,
-  VideoThumb,
   useAppColors,
 } from '../components/ui';
 import {extractList} from '../services/api/endpoints';
@@ -44,6 +56,8 @@ type Props = NativeStackScreenProps<RootStackParamList, 'VideoDetail'>;
 type ScoreValue = '0' | '1' | '2' | '3' | '4' | '5';
 type ResourceKind = 'magnet' | 'ed2k';
 type ResourceRecord = Record<string, unknown>;
+type IconComponent = React.ComponentType<{color?: string; size?: number; strokeWidth?: number}>;
+type Tone = 'primary' | 'secondary' | 'success' | 'warning' | 'danger' | 'neutral';
 
 const scoreOptions: ScoreValue[] = ['0', '1', '2', '3', '4', '5'];
 
@@ -53,12 +67,19 @@ const hiddenDetailKeys = new Set([
   'categories',
   'cover',
   'cover_url',
+  'director',
   'ed2ks',
+  'library',
+  'maker',
   'magnets',
+  'overview',
   'preview_images',
   'previews',
+  'publisher',
   'relative_movies',
   'samples',
+  'series',
+  'thumb_url',
 ]);
 
 const clampScore = (value: unknown): ScoreValue => {
@@ -134,11 +155,19 @@ const extractEntityItems = (value: unknown) =>
       }
       const record = asRecord(item);
       return {
-        id: pickString(record, ['id', 'actor_id', 'category_id', 'external_id']),
+        id: pickString(record, ['external_id', 'id', 'actor_id', 'category_id']),
         label: pickString(record, ['name', 'title', 'label']),
       };
     })
     .filter(item => item.label || item.id);
+
+const extractNamedEntity = (record: ResourceRecord, key: string) => {
+  const entity = asRecord(record[key]);
+  return {
+    id: pickString(entity, ['external_id', 'id', `${key}_id`]),
+    label: pickString(entity, ['name', 'title', 'label']),
+  };
+};
 
 const normalizeVideoItems = (payload: unknown, serverConfig: ServerConfig | null) =>
   extractNestedList<VideoSummary>(payload, ['videos', 'items', 'results', 'data'])
@@ -230,6 +259,205 @@ const resolveSubscriptionState = (detail: ResourceRecord, statusPayload: unknown
   return false;
 };
 
+const toneColor = (colors: ReturnType<typeof useAppColors>, tone: Tone) => {
+  if (tone === 'success') return colors.success;
+  if (tone === 'warning') return colors.warning;
+  if (tone === 'danger') return colors.danger;
+  if (tone === 'secondary') return colors.secondary;
+  if (tone === 'neutral') return colors.secondaryText;
+  return colors.primary;
+};
+
+const toneBackground = (colors: ReturnType<typeof useAppColors>, tone: Tone) => {
+  if (tone === 'success') return colors.successSoft;
+  if (tone === 'warning') return colors.warningSoft;
+  if (tone === 'danger') return colors.accentSoft;
+  if (tone === 'secondary') return colors.secondarySoft;
+  if (tone === 'neutral') return colors.chipBg;
+  return colors.primarySoft;
+};
+
+function DetailBadge({label, tone = 'neutral'}: {label: string; tone?: Tone}) {
+  const colors = useAppColors();
+  const color = toneColor(colors, tone);
+  return (
+    <View style={[styles.detailBadge, {backgroundColor: toneBackground(colors, tone), borderColor: color}]}>
+      <Text style={[styles.detailBadgeText, {color}]} numberOfLines={1}>
+        {label}
+      </Text>
+    </View>
+  );
+}
+
+function IconAction({
+  icon: Icon,
+  label,
+  onPress,
+  tone = 'primary',
+  disabled,
+}: {
+  icon: IconComponent;
+  label: string;
+  onPress: () => void;
+  tone?: Tone;
+  disabled?: boolean;
+}) {
+  const colors = useAppColors();
+  const color = toneColor(colors, tone);
+  return (
+    <Pressable
+      accessibilityRole="button"
+      onPress={onPress}
+      disabled={disabled}
+      style={({pressed}) => [
+        styles.iconAction,
+        {
+          backgroundColor: pressed ? toneBackground(colors, tone) : 'rgba(255, 255, 255, 0.03)',
+          borderColor: disabled ? colors.panelBorder : color,
+          opacity: disabled ? 0.5 : 1,
+          shadowColor: color,
+        },
+      ]}>
+      <Icon color={color} size={17} strokeWidth={2.2} />
+      <Text style={[styles.iconActionText, {color}]} numberOfLines={1}>
+        {label}
+      </Text>
+    </Pressable>
+  );
+}
+
+function HeroCover({
+  uri,
+  title,
+  onPlay,
+  disabled,
+}: {
+  uri?: string;
+  title: string;
+  onPlay: () => void;
+  disabled?: boolean;
+}) {
+  const colors = useAppColors();
+  return (
+    <View style={[styles.coverPanel, {backgroundColor: colors.inputBg, borderColor: colors.panelBorder}]}>
+      {uri ? (
+        <Image source={{uri}} style={styles.coverImage} resizeMode="cover" />
+      ) : (
+        <View style={styles.coverFallback}>
+          <Text style={[styles.coverFallbackEyebrow, {color: colors.primary}]}>COVER</Text>
+          <Text style={[styles.coverFallbackTitle, {color: colors.mutedText}]} numberOfLines={2}>
+            {title || 'No cover'}
+          </Text>
+        </View>
+      )}
+      <View style={styles.coverShade} />
+      <Pressable
+        accessibilityRole="button"
+        disabled={disabled}
+        onPress={onPlay}
+        style={({pressed}) => [
+          styles.playButton,
+          {
+            backgroundColor: pressed ? colors.primarySoft : 'rgba(0, 0, 0, 0.58)',
+            borderColor: colors.primary,
+            opacity: disabled ? 0.55 : 1,
+            shadowColor: colors.primary,
+          },
+        ]}>
+        <Play color={colors.primary} size={28} />
+      </Pressable>
+    </View>
+  );
+}
+
+function ScoreStars({score}: {score?: number}) {
+  const colors = useAppColors();
+  const safeScore = Number.isFinite(score) ? Math.max(0, Math.min(5, Number(score))) : 0;
+  return (
+    <View style={styles.starRow}>
+      {[1, 2, 3, 4, 5].map(index => (
+        <StarIcon
+          key={index}
+          color={index <= Math.round(safeScore) ? colors.warning : colors.panelBorder}
+          size={16}
+        />
+      ))}
+      <Text style={[styles.starText, {color: colors.warning}]}>
+        {safeScore ? safeScore.toFixed(1) : '---'}
+      </Text>
+    </View>
+  );
+}
+
+function InfoLine({
+  label,
+  value,
+  onPress,
+}: {
+  label: string;
+  value?: string;
+  onPress?: () => void;
+}) {
+  const colors = useAppColors();
+  if (!value) {
+    return null;
+  }
+
+  const content = (
+    <View style={[styles.infoLine, {borderBottomColor: colors.panelBorder}]}>
+      <Text style={[styles.infoLabel, {color: colors.mutedText}]}>{label}</Text>
+      <Text style={[styles.infoValue, {color: onPress ? colors.primary : colors.text}]} numberOfLines={2}>
+        {value}
+      </Text>
+    </View>
+  );
+
+  return onPress ? <Pressable onPress={onPress}>{content}</Pressable> : content;
+}
+
+function EntityChips({
+  title,
+  icon,
+  items,
+  onPress,
+}: {
+  title: string;
+  icon: ReactNode;
+  items: {id: string; label: string}[];
+  onPress: (item: {id: string; label: string}) => void;
+}) {
+  const colors = useAppColors();
+  if (!items.length) {
+    return null;
+  }
+
+  return (
+    <Card
+      variant="strong"
+      title={title}
+      action={icon}>
+      <View style={styles.chipWrap}>
+        {items.map((item, index) => (
+          <Pressable
+            key={`${item.id}-${item.label}-${index}`}
+            onPress={() => onPress(item)}
+            style={({pressed}) => [
+              styles.entityChip,
+              {
+                backgroundColor: pressed ? colors.primarySoft : colors.chipBg,
+                borderColor: pressed ? colors.primary : colors.panelBorder,
+              },
+            ]}>
+            <Text style={[styles.entityChipText, {color: colors.text}]} numberOfLines={1}>
+              {item.label || item.id}
+            </Text>
+          </Pressable>
+        ))}
+      </View>
+    </Card>
+  );
+}
+
 function PreviewStrip({images}: {images: string[]}) {
   const colors = useAppColors();
   if (!images.length) {
@@ -237,11 +465,11 @@ function PreviewStrip({images}: {images: string[]}) {
   }
 
   return (
-    <Card title={`预览图 (${images.length})`}>
+    <Card variant="strong" title={`预览图 (${images.length})`}>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.previewStrip}>
         {images.map((image, index) => (
-          <Pressable key={`${image}-${index}`} onPress={() => Linking.openURL(image)}>
-            <Image source={{uri: image}} style={[styles.previewImage, {backgroundColor: colors.border}]} />
+          <Pressable key={`${image}-${index}`} onPress={() => Linking.openURL(image)} style={styles.previewItem}>
+            <Image source={{uri: image}} style={[styles.previewImage, {backgroundColor: colors.inputBg}]} />
             <Text style={[styles.previewIndex, {color: colors.mutedText}]}>{index + 1}</Text>
           </Pressable>
         ))}
@@ -265,62 +493,48 @@ function VideoRail({
   }
 
   return (
-    <Card title={`${title} (${items.length})`}>
+    <Card variant="strong" title={`${title} (${items.length})`}>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.videoRail}>
-        {items.slice(0, 20).map((item, index) => (
-          <Pressable
-            key={item.id || item.code || String(index)}
-            onPress={() => onPress(item)}
-            style={({pressed}) => [styles.videoRailItem, {opacity: pressed ? 0.72 : 1}]}>
-            <VideoThumb uri={item.cover || item.cover_url} />
-            <Text style={[styles.videoRailTitle, {color: colors.text}]} numberOfLines={2}>
-              {item.title || item.code || item.id}
-            </Text>
-            <Text style={[styles.videoRailMeta, {color: colors.mutedText}]} numberOfLines={1}>
-              {item.code || item.release_date || item.date}
-            </Text>
-          </Pressable>
-        ))}
+        {items.slice(0, 20).map((item, index) => {
+          const cover = typeof item.cover === 'string' ? item.cover : typeof item.cover_url === 'string' ? item.cover_url : '';
+          return (
+            <Pressable
+              key={item.id || item.code || String(index)}
+              onPress={() => onPress(item)}
+              style={({pressed}) => [
+                styles.videoRailItem,
+                {
+                  backgroundColor: colors.panel,
+                  borderColor: colors.panelBorder,
+                  opacity: pressed ? 0.72 : 1,
+                },
+              ]}>
+              {cover ? (
+                <Image source={{uri: cover}} style={styles.videoRailImage} resizeMode="cover" />
+              ) : (
+                <View style={[styles.videoRailImage, styles.videoRailFallback, {backgroundColor: colors.inputBg}]}>
+                  <Text style={{color: colors.mutedText, fontSize: 10, fontWeight: '800'}}>NO IMG</Text>
+                </View>
+              )}
+              <View style={styles.videoRailBody}>
+                <Text style={[styles.videoRailTitle, {color: colors.text}]} numberOfLines={2}>
+                  {item.title || item.code || item.id}
+                </Text>
+                <Text style={[styles.videoRailMeta, {color: colors.code}]} numberOfLines={1}>
+                  {item.code || item.release_date || item.date}
+                </Text>
+              </View>
+            </Pressable>
+          );
+        })}
       </ScrollView>
-    </Card>
-  );
-}
-
-function EntityChips({
-  title,
-  items,
-  onPress,
-}: {
-  title: string;
-  items: {id: string; label: string}[];
-  onPress: (item: {id: string; label: string}) => void;
-}) {
-  const colors = useAppColors();
-  if (!items.length) {
-    return null;
-  }
-
-  return (
-    <Card title={title}>
-      <View style={styles.chipWrap}>
-        {items.map((item, index) => (
-          <Pressable
-            key={`${item.id}-${item.label}-${index}`}
-            onPress={() => onPress(item)}
-            style={({pressed}) => [
-              styles.chip,
-              {backgroundColor: colors.elevated, borderColor: colors.border, opacity: pressed ? 0.72 : 1},
-            ]}>
-            <Text style={{color: colors.text, fontWeight: '700'}}>{item.label || item.id}</Text>
-          </Pressable>
-        ))}
-      </View>
     </Card>
   );
 }
 
 function ResourceSection({
   title,
+  icon,
   kind,
   resources,
   loading,
@@ -329,6 +543,7 @@ function ResourceSection({
   onOpenUser,
 }: {
   title: string;
+  icon: ReactNode;
   kind: ResourceKind;
   resources: ResourceRecord[];
   loading?: boolean;
@@ -339,15 +554,18 @@ function ResourceSection({
   const colors = useAppColors();
 
   return (
-    <Card title={`${title} (${resources.length})`}>
+    <Card variant="cyber" title={`${title} (${resources.length})`} action={icon}>
       {loading ? <LoadingState label="资源加载中" /> : null}
       {!loading && !resources.length ? <EmptyState label="暂无资源" /> : null}
       {resources.map((resource, index) => {
         const url = resourceUrl(resource, kind);
+        const hasUrl = Boolean(url);
         const sourceUserId = pickString(resource, ['source_user_id', 'user_id']);
         const sourceUsername = pickString(resource, ['source_username', 'username']);
         return (
-          <View key={`${url}-${index}`} style={[styles.resourceRow, {borderBottomColor: colors.border}]}>
+          <View
+            key={`${url}-${index}`}
+            style={[styles.resourceCard, {backgroundColor: colors.inputBg, borderColor: colors.panelBorder}]}>
             <Text style={[styles.resourceTitle, {color: colors.text}]} numberOfLines={2}>
               {resourceTitle(resource, kind)}
             </Text>
@@ -362,17 +580,57 @@ function ResourceSection({
               ))}
               {Number(resource.file_count || 0) >= 10 ? <Badge label="多文件" tone="warning" /> : null}
             </View>
-            <View style={styles.actionRow}>
-              <TextButton label="分享" onPress={() => onShare(url)} />
-              <TextButton label="推送下载" onPress={() => onPush(resource, kind)} />
+            <View style={styles.resourceActions}>
+              <MiniAction icon={Share2} label="分享" onPress={() => onShare(url)} tone="primary" disabled={!hasUrl} />
+              <MiniAction icon={Download} label="推送" onPress={() => onPush(resource, kind)} tone="secondary" disabled={!hasUrl} />
               {sourceUserId ? (
-                <TextButton label={sourceUsername || '用户资源'} onPress={() => onOpenUser(resource)} />
+                <MiniAction
+                  icon={ExternalLink}
+                  label={sourceUsername || '用户资源'}
+                  onPress={() => onOpenUser(resource)}
+                  tone="neutral"
+                />
               ) : null}
             </View>
           </View>
         );
       })}
     </Card>
+  );
+}
+
+function MiniAction({
+  icon: Icon,
+  label,
+  onPress,
+  tone = 'primary',
+  disabled,
+}: {
+  icon: IconComponent;
+  label: string;
+  onPress: () => void;
+  tone?: Tone;
+  disabled?: boolean;
+}) {
+  const colors = useAppColors();
+  const color = toneColor(colors, tone);
+  return (
+    <Pressable
+      onPress={onPress}
+      disabled={disabled}
+      style={[
+        styles.miniAction,
+        {
+          borderColor: disabled ? colors.panelBorder : color,
+          backgroundColor: toneBackground(colors, tone),
+          opacity: disabled ? 0.45 : 1,
+        },
+      ]}>
+      <Icon color={color} size={13} strokeWidth={2.2} />
+      <Text style={[styles.miniActionText, {color}]} numberOfLines={1}>
+        {label}
+      </Text>
+    </Pressable>
   );
 }
 
@@ -384,7 +642,7 @@ function JsonRows({items}: {items: ResourceRecord[]}) {
   return (
     <>
       {items.slice(0, 12).map((item, index) => (
-        <View key={String(item.id || item.code || index)} style={[styles.resourceRow, {borderBottomColor: colors.border}]}>
+        <View key={String(item.id || item.code || index)} style={[styles.jsonRow, {borderBottomColor: colors.panelBorder}]}>
           <Text style={[styles.resourceTitle, {color: colors.text}]} numberOfLines={2}>
             {pickString(item, ['title', 'name', 'code', 'id']) || `#${index + 1}`}
           </Text>
@@ -533,12 +791,36 @@ export function VideoDetailScreen({navigation, route}: Props) {
   const externalSubtitleItems = extractNestedList<ResourceRecord>(externalSubtitles.data, ['items', 'files', 'subtitles']);
   const relatedListItems = extractNestedList<ResourceRecord>(relatedLists.data, ['lists', 'items', 'results']);
   const isSubscribed = resolveSubscriptionState(record, subscriptionStatus.data, resolvedCode);
+  const library = asRecord(record.library);
+  const libraryStatus = {
+    inLibrary: Boolean(library.in_library),
+    source: pickString(library, ['source']),
+    name: pickString(library, ['name']),
+    url: pickString(library, ['url']),
+  };
+  const director = extractNamedEntity(record, 'director');
+  const maker = extractNamedEntity(record, 'maker');
+  const publisher = extractNamedEntity(record, 'publisher');
+  const series = extractNamedEntity(record, 'series');
+  const overview = pickString(record, ['overview', 'description', 'summary']);
+  const videoScore = pickNumber(record, ['score', 'rating']) ?? video.score;
+  const duration = pickNumber(record, ['duration', 'runtime']);
+  const cover = absoluteUrl(
+    serverConfig,
+    String(video.cover || video.cover_url || pickString(record, ['cover_url', 'thumb_url', 'poster'])),
+  );
+  const canPlay = libraryStatus.inLibrary;
 
   const openVideo = (item: VideoSummary) => {
     navigation.push('VideoDetail', {code: item.code || item.id || ''});
   };
 
   const play = async () => {
+    if (!canPlay) {
+      Alert.alert('播放不可用', '当前影片尚未入库，无法从媒体库解析播放地址');
+      return;
+    }
+
     try {
       const result = await stream.refetch();
       const nextRecord = asRecord(result.data);
@@ -656,10 +938,18 @@ export function VideoDetailScreen({navigation, route}: Props) {
   };
 
   const previewSubtitle = async (item: ResourceRecord, external = false) => {
+    const target = external
+      ? pickString(item, ['url', 'download_url', 'link'])
+      : pickString(item, ['id', 'file_id', 'path']);
+    if (!target) {
+      Alert.alert('字幕不可用', '当前字幕缺少可预览的地址或 ID');
+      return;
+    }
+
     try {
       const result = external
-        ? await api.previewExternalSubtitle(pickString(item, ['url', 'download_url', 'link']))
-        : await api.previewSubtitle(pickString(item, ['id', 'file_id', 'path']));
+        ? await api.previewExternalSubtitle(target)
+        : await api.previewSubtitle(target);
       Alert.alert('字幕预览', summarizeRecord(result).slice(0, 900));
     } catch (error) {
       Alert.alert('预览失败', error instanceof Error ? error.message : '请求失败');
@@ -667,93 +957,139 @@ export function VideoDetailScreen({navigation, route}: Props) {
   };
 
   const openSubtitleDownload = (item: ResourceRecord, external = false) => {
+    const target = external
+      ? pickString(item, ['url', 'download_url', 'link'])
+      : pickString(item, ['id', 'file_id', 'path']);
+    if (!target) {
+      Alert.alert('字幕不可用', '当前字幕缺少可下载的地址或 ID');
+      return;
+    }
+
     const url = external
       ? apiFileUrl(
           serverConfig,
           `subtitle/external/download?url=${encodeURIComponent(
-            pickString(item, ['url', 'download_url', 'link']),
+            target,
           )}&name=${encodeURIComponent(pickString(item, ['name', 'title']) || resolvedCode)}&ext=${encodeURIComponent(
             pickString(item, ['ext', 'extension']) || 'srt',
           )}`,
         )
       : apiFileUrl(
           serverConfig,
-          `subtitle/download?id=${encodeURIComponent(pickString(item, ['id', 'file_id', 'path']))}`,
+          `subtitle/download?id=${encodeURIComponent(target)}`,
         );
     Linking.openURL(url).catch(error => Alert.alert('打开失败', error.message));
   };
 
+  const openEntity = (
+    entity: RootStackParamList['EntityMovies']['entity'],
+    item: {id: string; label: string},
+  ) => {
+    if (!item.id) {
+      return;
+    }
+    navigation.navigate('EntityMovies', {entity, id: item.id, title: item.label});
+  };
+
+  const openLibrary = () => {
+    if (!libraryStatus.url) {
+      return;
+    }
+    Linking.openURL(absoluteUrl(serverConfig, libraryStatus.url)).catch(error => Alert.alert('打开失败', error.message));
+  };
+
   if (detail.isLoading) {
-    return <LoadingState />;
+    return (
+      <Screen>
+        <LoadingState />
+      </Screen>
+    );
   }
 
   if (detail.error) {
-    return <ErrorState message={(detail.error as Error).message} onRetry={() => detail.refetch()} />;
+    return (
+      <Screen>
+        <ErrorState message={(detail.error as Error).message} onRetry={() => detail.refetch()} />
+      </Screen>
+    );
   }
 
   return (
     <Screen>
       <Card
-        action={
-          <TextButton label={detail.isFetching ? '刷新中' : '强制刷新'} onPress={forceRefresh} />
-        }>
-        <View style={styles.heroRow}>
-          <VideoThumb uri={video.cover || video.cover_url} />
-          <View style={styles.heroBody}>
-            <Text style={{color: colors.text, fontSize: 20, fontWeight: '800', lineHeight: 26}}>
-              {video.title || resolvedCode}
-            </Text>
-            <Text style={{color: colors.mutedText}}>
-              {[resolvedCode, video.release_date].filter(Boolean).join(' · ')}
-            </Text>
-            <View style={styles.badgeRow}>
-              {typeof video.score === 'number' ? <Badge label={`评分 ${video.score}`} /> : null}
-              {isSubscribed ? <Badge label="已订阅" tone="success" /> : null}
-            </View>
-            <PrimaryButton label={stream.isFetching ? '解析中' : '播放'} onPress={play} disabled={stream.isFetching} />
+        variant="cyber"
+        action={<TextButton label={detail.isFetching ? '刷新中' : '强制刷新'} onPress={forceRefresh} />}>
+        <View style={styles.detailHeader}>
+          <Text style={[styles.eyebrow, {color: colors.secondary}]}>VIDEO DETAIL</Text>
+          <Text style={[styles.detailTitle, {color: colors.text}]}>{video.title || resolvedCode}</Text>
+          <View style={styles.badgeRow}>
+            <DetailBadge label={resolvedCode} tone="secondary" />
+            {video.release_date || video.date ? <DetailBadge label={String(video.release_date || video.date)} tone="neutral" /> : null}
+            {duration ? <DetailBadge label={`${duration} 分钟`} tone="neutral" /> : null}
+            {libraryStatus.inLibrary ? (
+              <DetailBadge label={`已入库 ${libraryStatus.source || libraryStatus.name || '媒体库'}`} tone="success" />
+            ) : null}
+            {isSubscribed ? <DetailBadge label="已订阅" tone="warning" /> : null}
           </View>
         </View>
-        <View style={styles.actionGrid}>
-          <PrimaryButton label={isSubscribed ? '取消订阅' : '订阅'} onPress={toggleSubscription} tone="neutral" />
-          <PrimaryButton label="重新检查" onPress={recheck} tone="neutral" />
+
+        <HeroCover uri={cover} title={video.title || resolvedCode} onPlay={play} disabled={stream.isFetching || !canPlay} />
+
+        <View style={styles.heroActions}>
+          <IconAction icon={Play} label={!canPlay ? '未入库' : stream.isFetching ? '解析中' : '播放'} onPress={play} disabled={stream.isFetching || !canPlay} />
+          <IconAction icon={Heart} label={isSubscribed ? '取消订阅' : '订阅'} onPress={toggleSubscription} tone={isSubscribed ? 'danger' : 'secondary'} />
+          <IconAction icon={RotateCcw} label="重新检查" onPress={recheck} tone="neutral" />
+          <IconAction icon={RefreshCw} label="刷新" onPress={forceRefresh} tone="neutral" />
+          {libraryStatus.inLibrary && libraryStatus.url ? (
+            <IconAction icon={ExternalLink} label="媒体库" onPress={openLibrary} tone="success" />
+          ) : null}
         </View>
       </Card>
 
-      <Card title="评分">
+      <Card variant="strong" title="影片信息" action={<Info color={colors.primary} size={18} />}>
+        <InfoLine label="导演" value={director.label} onPress={() => openEntity('directors', director)} />
+        <InfoLine label="制作商" value={maker.label} onPress={() => openEntity('makers', maker)} />
+        <InfoLine label="发行商" value={publisher.label} onPress={() => openEntity('publishers', publisher)} />
+        <InfoLine label="系列" value={series.label} onPress={() => openEntity('series', series)} />
+        <InfoLine label="发行日期" value={String(video.release_date || video.date || '')} />
+        <View style={[styles.infoLine, {borderBottomColor: colors.panelBorder}]}>
+          <Text style={[styles.infoLabel, {color: colors.mutedText}]}>评分</Text>
+          <ScoreStars score={videoScore} />
+        </View>
+        {overview ? (
+          <Text style={[styles.overview, {color: colors.secondaryText}]}>{overview}</Text>
+        ) : null}
+      </Card>
+
+      <Card variant="strong" title="我的评分" action={<StarIcon color={colors.warning} size={18} />}>
         <SegmentedControl
           value={score}
           onChange={setScore}
           options={scoreOptions.map(value => ({label: value, value}))}
         />
-        <PrimaryButton label="保存评分" onPress={submitScore} tone="neutral" />
-      </Card>
-
-      <Card title="详情">
-        {Object.entries(record)
-          .filter(([key, value]) => !hiddenDetailKeys.has(key) && ['string', 'number', 'boolean'].includes(typeof value))
-          .slice(0, 18)
-          .map(([key, value]) => (
-            <KeyValueRow key={key} label={key} value={String(value)} />
-          ))}
+        <PrimaryButton label="保存评分" onPress={submitScore} tone="warning" />
       </Card>
 
       <EntityChips
         title="演员"
+        icon={<Users color={colors.primary} size={18} />}
         items={actors}
         onPress={item => navigation.navigate('Filter', {type: 'actor', id: item.id, value: item.label})}
       />
       <EntityChips
         title="类别"
+        icon={<Tags color={colors.secondary} size={18} />}
         items={categories}
         onPress={item => navigation.navigate('Filter', {type: 'category', id: item.id, value: item.label})}
       />
 
       <PreviewStrip images={previews} />
-      <VideoRail title="相似影片" items={relativeMovies} onPress={openVideo} />
       <VideoRail title="演员相关" items={actorMovies} onPress={openVideo} />
+      <VideoRail title="相似影片" items={relativeMovies} onPress={openVideo} />
 
       <ResourceSection
         title="磁链"
+        icon={<Download color={colors.primary} size={18} />}
         kind="magnet"
         resources={magnets}
         loading={customMagnets.isFetching || nyaaMagnets.isFetching}
@@ -763,6 +1099,7 @@ export function VideoDetailScreen({navigation, route}: Props) {
       />
       <ResourceSection
         title="ed2k"
+        icon={<Download color={colors.secondary} size={18} />}
         kind="ed2k"
         resources={ed2ks}
         onShare={shareResource}
@@ -771,6 +1108,7 @@ export function VideoDetailScreen({navigation, route}: Props) {
       />
 
       <Card
+        variant="cyber"
         title="字幕"
         action={
           <TextButton
@@ -785,137 +1123,347 @@ export function VideoDetailScreen({navigation, route}: Props) {
           <EmptyState label="暂无字幕" />
         ) : null}
         {localSubtitleItems.map((item, index) => (
-          <View key={`local-${index}`} style={[styles.resourceRow, {borderBottomColor: colors.border}]}>
-            <Text style={[styles.resourceTitle, {color: colors.text}]}>
-              {pickString(item, ['name', 'filename', 'path', 'id']) || `本地字幕 ${index + 1}`}
-            </Text>
-            <View style={styles.actionRow}>
-              <TextButton label="预览" onPress={() => previewSubtitle(item)} />
-              <TextButton label="下载" onPress={() => openSubtitleDownload(item)} />
-            </View>
-          </View>
+          <SubtitleRow
+            key={`local-${index}`}
+            item={item}
+            title={pickString(item, ['name', 'filename', 'path', 'id']) || `本地字幕 ${index + 1}`}
+            onPreview={() => previewSubtitle(item)}
+            onDownload={() => openSubtitleDownload(item)}
+          />
         ))}
         {externalSubtitleItems.map((item, index) => (
-          <View key={`external-${index}`} style={[styles.resourceRow, {borderBottomColor: colors.border}]}>
-            <Text style={[styles.resourceTitle, {color: colors.text}]}>
-              {pickString(item, ['name', 'title', 'filename']) || `外部字幕 ${index + 1}`}
-            </Text>
-            <Text style={[styles.resourceMeta, {color: colors.mutedText}]}>{pickString(item, ['site', 'lang', 'ext'])}</Text>
-            <View style={styles.actionRow}>
-              <TextButton label="预览" onPress={() => previewSubtitle(item, true)} />
-              <TextButton label="下载" onPress={() => openSubtitleDownload(item, true)} />
-            </View>
-          </View>
+          <SubtitleRow
+            key={`external-${index}`}
+            item={item}
+            title={pickString(item, ['name', 'title', 'filename']) || `外部字幕 ${index + 1}`}
+            onPreview={() => previewSubtitle(item, true)}
+            onDownload={() => openSubtitleDownload(item, true)}
+          />
         ))}
       </Card>
 
-      <Card title="相关清单">
+      <Card variant="strong" title="相关清单">
         {relatedLists.isLoading ? <LoadingState /> : <JsonRows items={relatedListItems} />}
       </Card>
 
       {selectedUser ? (
-        <Card title={`${selectedUser.username || selectedUser.id} 的资源`}>
+        <Card variant="strong" title={`${selectedUser.username || selectedUser.id} 的资源`}>
           {userResources.isLoading ? <LoadingState /> : <JsonRows items={userResourceItems} />}
           {userResourceMetadata.data ? (
-            <Text style={{color: colors.mutedText, lineHeight: 22}}>
+            <Text style={[styles.resourceMeta, {color: colors.mutedText}]}>
               {summarizeRecord(userResourceMetadata.data)}
             </Text>
           ) : null}
         </Card>
       ) : null}
 
-      <Card title="下载历史">
+      <Card variant="strong" title="原始字段">
+        {Object.entries(record)
+          .filter(([key, value]) => !hiddenDetailKeys.has(key) && ['string', 'number', 'boolean'].includes(typeof value))
+          .slice(0, 18)
+          .map(([key, value]) => (
+            <InfoLine key={key} label={key} value={String(value)} />
+          ))}
+      </Card>
+
+      <Card variant="strong" title="下载历史">
         {history.isLoading ? (
           <LoadingState />
         ) : (
-          <Text style={{color: colors.text, lineHeight: 22}}>{summarizeRecord(history.data)}</Text>
+          <Text style={[styles.resourceMeta, {color: colors.secondaryText}]}>{summarizeRecord(history.data)}</Text>
         )}
       </Card>
 
       {streamUrl ? (
-        <Card title="播放地址">
-          <Text style={{color: colors.mutedText}}>{absoluteUrl(serverConfig, streamUrl)}</Text>
+        <Card variant="strong" title="播放地址">
+          <Text style={[styles.resourceMeta, {color: colors.mutedText}]}>{absoluteUrl(serverConfig, streamUrl)}</Text>
         </Card>
       ) : null}
     </Screen>
   );
 }
 
+function SubtitleRow({
+  title,
+  item,
+  onPreview,
+  onDownload,
+}: {
+  title: string;
+  item: ResourceRecord;
+  onPreview: () => void;
+  onDownload: () => void;
+}) {
+  const colors = useAppColors();
+  return (
+    <View style={[styles.resourceCard, {backgroundColor: colors.inputBg, borderColor: colors.panelBorder}]}>
+      <View style={styles.subtitleTitleRow}>
+        <Captions color={colors.primary} size={16} />
+        <Text style={[styles.resourceTitle, {color: colors.text}]} numberOfLines={2}>
+          {title}
+        </Text>
+      </View>
+      <Text style={[styles.resourceMeta, {color: colors.mutedText}]} numberOfLines={1}>
+        {[pickString(item, ['site', 'source']), pickString(item, ['lang', 'language']), pickString(item, ['ext', 'extension'])]
+          .filter(Boolean)
+          .join(' · ')}
+      </Text>
+      <View style={styles.resourceActions}>
+        <MiniAction icon={ExternalLink} label="预览" onPress={onPreview} tone="primary" />
+        <MiniAction icon={Download} label="下载" onPress={onDownload} tone="secondary" />
+      </View>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
-  actionGrid: {
-    flexDirection: 'row',
-    gap: spacing.md,
+  detailHeader: {
+    gap: spacing.sm,
   },
-  actionRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: spacing.lg,
-    marginTop: spacing.sm,
+  eyebrow: {
+    fontSize: 11,
+    fontWeight: '900',
+    letterSpacing: 0,
+  },
+  detailTitle: {
+    fontSize: 25,
+    fontWeight: '900',
+    lineHeight: 31,
   },
   badgeRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: spacing.sm,
   },
-  chip: {
+  detailBadge: {
     borderRadius: radius.sm,
     borderWidth: StyleSheet.hairlineWidth,
+    maxWidth: '100%',
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 4,
+  },
+  detailBadgeText: {
+    fontSize: 11,
+    fontWeight: '900',
+  },
+  coverPanel: {
+    aspectRatio: 16 / 9,
+    borderRadius: radius.lg,
+    borderWidth: StyleSheet.hairlineWidth,
+    overflow: 'hidden',
+    position: 'relative',
+  },
+  coverImage: {
+    height: '100%',
+    width: '100%',
+  },
+  coverFallback: {
+    alignItems: 'center',
+    height: '100%',
+    justifyContent: 'center',
+    padding: spacing.lg,
+    width: '100%',
+  },
+  coverFallbackEyebrow: {
+    fontSize: 11,
+    fontWeight: '900',
+    marginBottom: spacing.sm,
+  },
+  coverFallbackTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    textAlign: 'center',
+  },
+  coverShade: {
+    backgroundColor: 'rgba(0, 0, 0, 0.24)',
+    bottom: 0,
+    left: 0,
+    position: 'absolute',
+    right: 0,
+    top: 0,
+  },
+  playButton: {
+    alignItems: 'center',
+    borderRadius: 999,
+    borderWidth: 1,
+    height: 64,
+    justifyContent: 'center',
+    left: '50%',
+    marginLeft: -32,
+    marginTop: -32,
+    position: 'absolute',
+    shadowOffset: {width: 0, height: 0},
+    shadowOpacity: 0.55,
+    shadowRadius: 18,
+    top: '50%',
+    width: 64,
+  },
+  heroActions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+  },
+  iconAction: {
+    alignItems: 'center',
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    flexDirection: 'row',
+    flexGrow: 1,
+    gap: spacing.sm,
+    justifyContent: 'center',
+    minHeight: 42,
+    minWidth: '47%',
     paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
+    shadowOffset: {width: 0, height: 0},
+    shadowOpacity: 0.32,
+    shadowRadius: 10,
+  },
+  iconActionText: {
+    flexShrink: 1,
+    fontSize: 13,
+    fontWeight: '900',
+  },
+  infoLine: {
+    alignItems: 'center',
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    flexDirection: 'row',
+    gap: spacing.md,
+    justifyContent: 'space-between',
+    minHeight: 42,
+  },
+  infoLabel: {
+    flex: 1,
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  infoValue: {
+    flex: 1.35,
+    fontSize: 14,
+    fontWeight: '800',
+    lineHeight: 20,
+    textAlign: 'right',
+  },
+  starRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 2,
+    justifyContent: 'flex-end',
+  },
+  starText: {
+    fontSize: 13,
+    fontWeight: '900',
+    marginLeft: spacing.xs,
+  },
+  overview: {
+    fontSize: 14,
+    lineHeight: 22,
   },
   chipWrap: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: spacing.sm,
   },
-  heroBody: {
-    flex: 1,
-    gap: spacing.sm,
-  },
-  heroRow: {
-    flexDirection: 'row',
-    gap: spacing.md,
-  },
-  previewImage: {
-    aspectRatio: 16 / 9,
+  entityChip: {
     borderRadius: radius.sm,
-    width: 168,
+    borderWidth: StyleSheet.hairlineWidth,
+    maxWidth: '100%',
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
   },
-  previewIndex: {
-    fontSize: 12,
-    marginTop: spacing.xs,
-    textAlign: 'center',
+  entityChipText: {
+    fontSize: 13,
+    fontWeight: '800',
   },
   previewStrip: {
     gap: spacing.md,
   },
-  resourceMeta: {
-    fontSize: 13,
-    lineHeight: 19,
+  previewItem: {
+    width: 190,
   },
-  resourceRow: {
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    paddingBottom: spacing.md,
-    gap: spacing.xs,
+  previewImage: {
+    aspectRatio: 16 / 9,
+    borderRadius: radius.lg,
+    width: '100%',
   },
-  resourceTitle: {
-    fontSize: 15,
+  previewIndex: {
+    fontSize: 12,
     fontWeight: '700',
-    lineHeight: 21,
+    marginTop: spacing.xs,
+    textAlign: 'center',
   },
   videoRail: {
     gap: spacing.md,
   },
   videoRailItem: {
-    gap: spacing.sm,
-    width: 112,
+    borderRadius: radius.lg,
+    borderWidth: StyleSheet.hairlineWidth,
+    overflow: 'hidden',
+    width: 126,
   },
-  videoRailMeta: {
-    fontSize: 12,
+  videoRailImage: {
+    aspectRatio: 0.72,
+    width: '100%',
+  },
+  videoRailFallback: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  videoRailBody: {
+    gap: 3,
+    padding: spacing.sm,
   },
   videoRailTitle: {
+    fontSize: 12,
+    fontWeight: '800',
+    lineHeight: 16,
+  },
+  videoRailMeta: {
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  resourceCard: {
+    borderRadius: radius.lg,
+    borderWidth: StyleSheet.hairlineWidth,
+    gap: spacing.sm,
+    padding: spacing.md,
+  },
+  resourceTitle: {
+    flex: 1,
     fontSize: 14,
-    fontWeight: '700',
+    fontWeight: '800',
+    lineHeight: 20,
+  },
+  resourceMeta: {
+    fontSize: 12,
     lineHeight: 19,
+  },
+  resourceActions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+  },
+  miniAction: {
+    alignItems: 'center',
+    borderRadius: radius.sm,
+    borderWidth: StyleSheet.hairlineWidth,
+    flexDirection: 'row',
+    gap: 4,
+    maxWidth: '100%',
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 5,
+  },
+  miniActionText: {
+    fontSize: 11,
+    fontWeight: '900',
+  },
+  jsonRow: {
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    gap: spacing.xs,
+    paddingBottom: spacing.md,
+  },
+  subtitleTitleRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: spacing.sm,
   },
 });
