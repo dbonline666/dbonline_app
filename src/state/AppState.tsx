@@ -49,7 +49,7 @@ export function AppProvider({children}: PropsWithChildren) {
   const [serverConfig, setServerConfig] = useState<ServerConfig | null>(null);
   const [token, setToken] = useState<string | null>(null);
   const [authStatus, setAuthStatus] = useState<AuthStatus | null>(null);
-  const [themeMode, setThemeModeState] = useState<ThemeMode>('system');
+  const [themeMode, setThemeModeState] = useState<ThemeMode>('dark');
   const [locale, setLocaleState] = useState<AppLocale>('zh-CN');
 
   useEffect(() => {
@@ -161,4 +161,3 @@ export const useAppState = () => {
   }
   return value;
 };
-

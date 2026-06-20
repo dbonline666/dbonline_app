@@ -19,14 +19,14 @@ const queryClient = new QueryClient({
 function AppFrame() {
   const systemScheme = useColorScheme();
   const {themeMode} = useAppState();
-  const effectiveMode = themeMode === 'system' ? systemScheme || 'light' : themeMode;
+  const effectiveMode = themeMode === 'system' ? systemScheme || 'dark' : themeMode;
   const isDark = effectiveMode === 'dark';
 
   return (
     <>
       <StatusBar
         barStyle={isDark ? 'light-content' : 'dark-content'}
-        backgroundColor={isDark ? palette.neutral950 : palette.neutral50}
+        backgroundColor={isDark ? palette.bgDeep : palette.neutral50}
       />
       <AppNavigator theme={getNavigationTheme(effectiveMode)} />
     </>

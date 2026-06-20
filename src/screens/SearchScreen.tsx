@@ -83,7 +83,7 @@ export function SearchScreen() {
   const items = rawItems.map(item => normalizeVideo(item, serverConfig));
 
   return (
-    <Screen scroll={mode === 'actor'} padded={false}>
+    <Screen scroll={mode !== 'movie'} padded={false}>
       <View style={{padding: spacing.lg, gap: spacing.md}}>
         <SegmentedControl<SearchMode>
           value={mode}

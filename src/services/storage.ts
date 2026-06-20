@@ -21,7 +21,7 @@ export const loadThemeMode = async (): Promise<ThemeMode> => {
   const value = await AsyncStorage.getItem(THEME_KEY);
   return value === 'light' || value === 'dark' || value === 'system'
     ? value
-    : 'system';
+    : 'dark';
 };
 
 export const saveThemeMode = (mode: ThemeMode) => AsyncStorage.setItem(THEME_KEY, mode);
@@ -50,4 +50,3 @@ export const saveToken = (token: string) =>
   Keychain.setGenericPassword('db-online', token, {service: TOKEN_SERVICE});
 
 export const clearToken = () => Keychain.resetGenericPassword({service: TOKEN_SERVICE});
-

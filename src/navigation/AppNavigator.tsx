@@ -1,6 +1,6 @@
 import React from 'react';
 import {ActivityIndicator, View} from 'react-native';
-import {NavigationContainer, Theme} from '@react-navigation/native';
+import {NavigationContainer, Theme, useTheme} from '@react-navigation/native';
 import {createBottomTabNavigator} from '@react-navigation/bottom-tabs';
 import {createNativeStackNavigator} from '@react-navigation/native-stack';
 import {
@@ -13,7 +13,7 @@ import {
 import {useQuery} from '@tanstack/react-query';
 import type {MainTabParamList, RootStackParamList} from './types';
 import {useAppState} from '../state/AppState';
-import {palette} from '../theme';
+import {appColors} from '../theme';
 import {HomeScreen} from '../screens/HomeScreen';
 import {ServerSetupScreen} from '../screens/ServerSetupScreen';
 import {LoginScreen} from '../screens/LoginScreen';
@@ -42,12 +42,23 @@ const Tabs = createBottomTabNavigator<MainTabParamList>();
 
 function MainTabs() {
   const {t} = useAppState();
+  const theme = useTheme();
+  const colors = appColors(theme.dark ? 'dark' : 'light');
   return (
     <Tabs.Navigator
       screenOptions={{
         headerShown: false,
-        tabBarActiveTintColor: palette.blue600,
-        tabBarLabelStyle: {fontWeight: '700'},
+        tabBarActiveTintColor: colors.primary,
+        tabBarInactiveTintColor: colors.mutedText,
+        tabBarLabelStyle: {fontWeight: '800', fontSize: 11},
+        tabBarStyle: {
+          backgroundColor: colors.panelStrong,
+          borderTopColor: colors.panelBorder,
+          borderTopWidth: 1,
+          height: 64,
+          paddingBottom: 7,
+          paddingTop: 7,
+        },
       }}>
       <Tabs.Screen
         name="Home"
@@ -95,6 +106,8 @@ function MainTabs() {
 
 function Gate() {
   const {api, booting, serverConfig, token, setAuthStatus, setSessionToken} = useAppState();
+  const theme = useTheme();
+  const colors = appColors(theme.dark ? 'dark' : 'light');
   const authStatusQuery = useQuery({
     queryKey: ['auth-status', serverConfig?.origin],
     enabled: !!serverConfig && !booting,
@@ -124,8 +137,8 @@ function Gate() {
 
   if (booting) {
     return (
-      <View style={{flex: 1, alignItems: 'center', justifyContent: 'center'}}>
-        <ActivityIndicator color={palette.blue600} />
+      <View style={{flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.background}}>
+        <ActivityIndicator color={colors.primary} />
       </View>
     );
   }
@@ -140,8 +153,8 @@ function Gate() {
 
   if (status?.enabled && status.configured && token && verifyQuery.isLoading) {
     return (
-      <View style={{flex: 1, alignItems: 'center', justifyContent: 'center'}}>
-        <ActivityIndicator color={palette.blue600} />
+      <View style={{flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.background}}>
+        <ActivityIndicator color={colors.primary} />
       </View>
     );
   }
@@ -156,7 +169,14 @@ function Gate() {
 export function AppNavigator({theme}: {theme: Theme}) {
   return (
     <NavigationContainer theme={theme}>
-      <Stack.Navigator>
+      <Stack.Navigator
+        screenOptions={{
+          headerStyle: {backgroundColor: theme.colors.card},
+          headerTintColor: theme.colors.text,
+          headerTitleStyle: {fontWeight: '800'},
+          headerShadowVisible: false,
+          contentStyle: {backgroundColor: theme.colors.background},
+        }}>
         <Stack.Screen
           name="MainTabs"
           component={Gate}

@@ -4,11 +4,13 @@ import {
   Image,
   Pressable,
   ScrollView,
+  StyleProp,
   StyleSheet,
   Text,
   TextInput,
   TextInputProps,
   View,
+  ViewStyle,
 } from 'react-native';
 import {useTheme} from '@react-navigation/native';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
@@ -18,6 +20,17 @@ export const useAppColors = () => {
   const theme = useTheme();
   return appColors(theme.dark ? 'dark' : 'light');
 };
+
+function ScreenChrome() {
+  const colors = useAppColors();
+  return (
+    <>
+      <View pointerEvents="none" style={[styles.topRule, {backgroundColor: colors.primary}]} />
+      <View pointerEvents="none" style={[styles.leftRule, {backgroundColor: colors.secondary}]} />
+      <View pointerEvents="none" style={[styles.screenTint, {borderColor: colors.panelBorder}]} />
+    </>
+  );
+}
 
 export function Screen({
   children,
@@ -29,32 +42,75 @@ export function Screen({
   const contentStyle = [
     styles.screenContent,
     padded ? styles.padded : null,
-    {paddingBottom: Math.max(insets.bottom, spacing.lg), backgroundColor: colors.background},
+    {paddingBottom: Math.max(insets.bottom, spacing.lg)},
   ];
 
   if (!scroll) {
-    return <View style={[styles.screen, contentStyle]}>{children}</View>;
+    return (
+      <View style={[styles.screen, {backgroundColor: colors.background}]}>
+        <ScreenChrome />
+        <View style={contentStyle}>{children}</View>
+      </View>
+    );
   }
 
   return (
-    <ScrollView style={[styles.screen, {backgroundColor: colors.background}]} contentContainerStyle={contentStyle}>
-      {children}
-    </ScrollView>
+    <View style={[styles.screen, {backgroundColor: colors.background}]}>
+      <ScreenChrome />
+      <ScrollView style={styles.screenScroll} contentContainerStyle={contentStyle}>
+        {children}
+      </ScrollView>
+    </View>
   );
 }
 
-export function Card({children, title, action}: PropsWithChildren<{title?: string; action?: ReactNode}>) {
+export function Card({
+  children,
+  title,
+  action,
+  variant = 'default',
+  style,
+}: PropsWithChildren<{
+  title?: string;
+  action?: ReactNode;
+  variant?: 'default' | 'strong' | 'cyber';
+  style?: StyleProp<ViewStyle>;
+}>) {
   const colors = useAppColors();
+  const isCyber = variant === 'cyber';
   return (
-    <View style={[styles.card, {backgroundColor: colors.surface, borderColor: colors.border}]}>
+    <View
+      style={[
+        styles.card,
+        {
+          backgroundColor: variant === 'strong' || isCyber ? colors.panelStrong : colors.panel,
+          borderColor: isCyber ? colors.primary : colors.panelBorder,
+          shadowColor: colors.shadow,
+        },
+        isCyber ? styles.cyberCard : null,
+        style,
+      ]}>
+      {isCyber ? <CyberCorners /> : null}
       {(title || action) && (
         <View style={styles.cardHeader}>
-          {title ? <Text style={[styles.cardTitle, {color: colors.text}]}>{title}</Text> : <View />}
+          {title ? <Text style={[styles.cardTitle, {color: isCyber ? colors.primary : colors.text}]}>{title}</Text> : <View />}
           {action}
         </View>
       )}
       {children}
     </View>
+  );
+}
+
+function CyberCorners() {
+  const colors = useAppColors();
+  return (
+    <>
+      <View style={[styles.corner, styles.cornerTopLeft, {borderColor: colors.primary}]} />
+      <View style={[styles.corner, styles.cornerTopRight, {borderColor: colors.primary}]} />
+      <View style={[styles.corner, styles.cornerBottomLeft, {borderColor: colors.secondary}]} />
+      <View style={[styles.corner, styles.cornerBottomRight, {borderColor: colors.secondary}]} />
+    </>
   );
 }
 
@@ -67,12 +123,33 @@ export function PrimaryButton({
   label: string;
   onPress: () => void;
   disabled?: boolean;
-  tone?: 'primary' | 'danger' | 'neutral';
+  tone?: 'primary' | 'danger' | 'neutral' | 'secondary' | 'success' | 'warning';
 }) {
   const colors = useAppColors();
-  const backgroundColor =
-    tone === 'danger' ? colors.danger : tone === 'neutral' ? colors.border : colors.primary;
-  const textColor = tone === 'neutral' ? colors.text : '#ffffff';
+  const toneColor =
+    tone === 'danger'
+      ? colors.danger
+      : tone === 'neutral'
+        ? colors.secondaryText
+        : tone === 'secondary'
+          ? colors.secondary
+          : tone === 'success'
+            ? colors.success
+            : tone === 'warning'
+              ? colors.warning
+              : colors.primary;
+  const softBg =
+    tone === 'danger'
+      ? colors.accentSoft
+      : tone === 'neutral'
+        ? colors.chipBg
+        : tone === 'secondary'
+          ? colors.secondarySoft
+          : tone === 'success'
+            ? colors.successSoft
+            : tone === 'warning'
+              ? colors.warningSoft
+              : colors.primarySoft;
 
   return (
     <Pressable
@@ -81,9 +158,17 @@ export function PrimaryButton({
       disabled={disabled}
       style={({pressed}) => [
         styles.button,
-        {backgroundColor, opacity: disabled ? 0.5 : pressed ? 0.78 : 1},
+        {
+          backgroundColor: pressed ? softBg : 'rgba(255, 255, 255, 0.03)',
+          borderColor: disabled ? colors.panelBorder : toneColor,
+          opacity: disabled ? 0.5 : 1,
+          shadowColor: toneColor,
+        },
+        pressed && !disabled ? styles.buttonPressed : null,
       ]}>
-      <Text style={[styles.buttonText, {color: textColor}]}>{label}</Text>
+      <Text style={[styles.buttonText, {color: toneColor}]} numberOfLines={1}>
+        {label}
+      </Text>
     </Pressable>
   );
 }
@@ -128,7 +213,11 @@ export function Field({
         style={[
           styles.input,
           multiline ? styles.multilineInput : null,
-          {borderColor: colors.border, color: colors.text, backgroundColor: colors.elevated},
+          {
+            borderColor: colors.panelBorder,
+            color: colors.text,
+            backgroundColor: colors.inputBg,
+          },
         ]}
       />
     </View>
@@ -146,15 +235,18 @@ export function SegmentedControl<T extends string>({
 }) {
   const colors = useAppColors();
   return (
-    <View style={[styles.segmented, {backgroundColor: colors.border}]}>
+    <View style={[styles.segmented, {backgroundColor: colors.inputBg, borderColor: colors.panelBorder}]}>
       {options.map(option => {
         const active = option.value === value;
         return (
           <Pressable
             key={option.value}
             onPress={() => onChange(option.value)}
-            style={[styles.segment, active ? {backgroundColor: colors.surface} : null]}>
-            <Text style={[styles.segmentText, {color: active ? colors.text : colors.mutedText}]}>
+            style={[
+              styles.segment,
+              active ? {backgroundColor: colors.primarySoft, borderColor: colors.primary} : {borderColor: 'transparent'},
+            ]}>
+            <Text style={[styles.segmentText, {color: active ? colors.primary : colors.mutedText}]} numberOfLines={1}>
               {option.label}
             </Text>
           </Pressable>
@@ -175,8 +267,10 @@ export function KeyValueRow({
 }) {
   const colors = useAppColors();
   const content = (
-    <View style={[styles.row, {borderBottomColor: colors.border}]}>
-      <Text style={[styles.rowLabel, {color: colors.text}]}>{label}</Text>
+    <View style={[styles.row, {borderBottomColor: colors.panelBorder}]}>
+      <Text style={[styles.rowLabel, {color: colors.text}]} numberOfLines={1}>
+        {label}
+      </Text>
       {typeof value === 'string' || typeof value === 'number' ? (
         <Text style={[styles.rowValue, {color: colors.mutedText}]} numberOfLines={2}>
           {value}
@@ -195,7 +289,7 @@ export function LoadingState({label = '加载中'}: {label?: string}) {
   return (
     <View style={styles.stateBox}>
       <ActivityIndicator color={colors.primary} />
-      <Text style={[styles.stateText, {color: colors.mutedText}]}>{label}</Text>
+      <Text style={[styles.stateText, {color: colors.primary}]}>{label}</Text>
     </View>
   );
 }
@@ -212,7 +306,7 @@ export function EmptyState({label = '暂无数据'}: {label?: string}) {
 export function ErrorState({message, onRetry}: {message: string; onRetry?: () => void}) {
   const colors = useAppColors();
   return (
-    <Card>
+    <Card variant="cyber">
       <Text style={[styles.errorText, {color: colors.danger}]}>{message}</Text>
       {onRetry ? <PrimaryButton label="重试" onPress={onRetry} tone="neutral" /> : null}
     </Card>
@@ -223,38 +317,76 @@ export function VideoThumb({uri}: {uri?: string}) {
   const colors = useAppColors();
   if (!uri) {
     return (
-      <View style={[styles.thumb, {backgroundColor: colors.border}]}>
+      <View style={[styles.thumb, {backgroundColor: colors.inputBg, borderColor: colors.panelBorder}]}>
         <Text style={{color: colors.mutedText}}>NO IMG</Text>
       </View>
     );
   }
 
-  return <Image source={{uri}} style={styles.thumb} resizeMode="cover" />;
+  return <Image source={{uri}} style={[styles.thumb, {borderColor: colors.panelBorder}]} resizeMode="cover" />;
 }
 
-export function Badge({label, tone = 'neutral'}: {label: string; tone?: 'neutral' | 'success' | 'warning'}) {
+export function Badge({
+  label,
+  tone = 'neutral',
+}: {
+  label: string;
+  tone?: 'neutral' | 'success' | 'warning' | 'danger' | 'info' | 'accent' | 'primary' | 'secondary';
+}) {
   const colors = useAppColors();
+  const toneColor =
+    tone === 'success'
+      ? colors.success
+      : tone === 'warning'
+        ? colors.warning
+        : tone === 'danger'
+          ? colors.danger
+          : tone === 'accent'
+            ? colors.accent
+            : tone === 'secondary'
+              ? colors.secondary
+              : tone === 'info' || tone === 'primary'
+                ? colors.primary
+                : colors.secondaryText;
   const backgroundColor =
     tone === 'success'
-      ? 'rgba(22, 163, 74, 0.14)'
+      ? colors.successSoft
       : tone === 'warning'
-        ? 'rgba(217, 119, 6, 0.16)'
-        : colors.border;
-  const color = tone === 'success' ? colors.success : tone === 'warning' ? colors.warning : colors.text;
+        ? colors.warningSoft
+        : tone === 'danger' || tone === 'accent'
+          ? colors.accentSoft
+          : tone === 'secondary'
+            ? colors.secondarySoft
+            : tone === 'info' || tone === 'primary'
+              ? colors.primarySoft
+              : colors.chipBg;
   return (
-    <View style={[styles.badge, {backgroundColor}]}>
-      <Text style={[styles.badgeText, {color}]}>{label}</Text>
+    <View style={[styles.badge, {backgroundColor, borderColor: toneColor}]}>
+      <Text style={[styles.badgeText, {color: toneColor}]} numberOfLines={1}>
+        {label}
+      </Text>
     </View>
   );
 }
 
 export function SectionTitle({children}: PropsWithChildren) {
   const colors = useAppColors();
-  return <Text style={[styles.sectionTitle, {color: colors.mutedText}]}>{children}</Text>;
+  return (
+    <View style={styles.sectionHeader}>
+      <View style={[styles.sectionRule, {backgroundColor: colors.primary}]} />
+      <Text style={[styles.sectionTitle, {color: colors.text}]} numberOfLines={1}>
+        {children}
+      </Text>
+    </View>
+  );
 }
 
 const styles = StyleSheet.create({
   screen: {
+    flex: 1,
+    overflow: 'hidden',
+  },
+  screenScroll: {
     flex: 1,
   },
   screenContent: {
@@ -264,11 +396,46 @@ const styles = StyleSheet.create({
   padded: {
     padding: spacing.lg,
   },
+  topRule: {
+    height: 1,
+    left: 0,
+    opacity: 0.62,
+    position: 'absolute',
+    right: 0,
+    top: 0,
+    zIndex: 1,
+  },
+  leftRule: {
+    bottom: 0,
+    left: 0,
+    opacity: 0.24,
+    position: 'absolute',
+    top: 0,
+    width: 1,
+    zIndex: 1,
+  },
+  screenTint: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    bottom: 0,
+    left: 0,
+    opacity: 0.7,
+    position: 'absolute',
+    right: 0,
+    top: 0,
+  },
   card: {
+    borderRadius: radius.lg,
     borderWidth: StyleSheet.hairlineWidth,
-    borderRadius: radius.md,
-    padding: spacing.lg,
+    elevation: 3,
     gap: spacing.md,
+    overflow: 'hidden',
+    padding: spacing.lg,
+    shadowOffset: {width: 0, height: 10},
+    shadowOpacity: 0.72,
+    shadowRadius: 24,
+  },
+  cyberCard: {
+    borderWidth: 1,
   },
   cardHeader: {
     alignItems: 'center',
@@ -277,36 +444,78 @@ const styles = StyleSheet.create({
     gap: spacing.md,
   },
   cardTitle: {
-    fontSize: 18,
-    fontWeight: '700',
+    flex: 1,
+    fontSize: 17,
+    fontWeight: '800',
+  },
+  corner: {
+    height: 16,
+    position: 'absolute',
+    width: 16,
+    zIndex: 1,
+  },
+  cornerTopLeft: {
+    borderLeftWidth: 1,
+    borderTopWidth: 1,
+    left: 7,
+    top: 7,
+  },
+  cornerTopRight: {
+    borderRightWidth: 1,
+    borderTopWidth: 1,
+    right: 7,
+    top: 7,
+  },
+  cornerBottomLeft: {
+    borderBottomWidth: 1,
+    borderLeftWidth: 1,
+    bottom: 7,
+    left: 7,
+  },
+  cornerBottomRight: {
+    borderBottomWidth: 1,
+    borderRightWidth: 1,
+    bottom: 7,
+    right: 7,
   },
   button: {
     alignItems: 'center',
     borderRadius: radius.sm,
-    minHeight: 46,
+    borderWidth: 1,
+    elevation: 2,
+    minHeight: 44,
     justifyContent: 'center',
     paddingHorizontal: spacing.lg,
+    shadowOffset: {width: 0, height: 0},
+    shadowOpacity: 0.38,
+    shadowRadius: 10,
+  },
+  buttonPressed: {
+    shadowOpacity: 0.6,
+    transform: [{scale: 0.99}],
   },
   buttonText: {
-    fontSize: 16,
-    fontWeight: '700',
+    fontSize: 14,
+    fontWeight: '800',
+    letterSpacing: 0,
+    textTransform: 'uppercase',
   },
   textButton: {
     fontSize: 15,
-    fontWeight: '600',
+    fontWeight: '700',
   },
   field: {
     gap: spacing.sm,
   },
   fieldLabel: {
-    fontSize: 13,
-    fontWeight: '700',
+    fontSize: 12,
+    fontWeight: '800',
   },
   input: {
-    borderRadius: radius.sm,
+    borderRadius: radius.md,
     borderWidth: StyleSheet.hairlineWidth,
-    fontSize: 16,
-    minHeight: 46,
+    fontSize: 15,
+    minHeight: 44,
     paddingHorizontal: spacing.md,
   },
   multilineInput: {
@@ -315,21 +524,23 @@ const styles = StyleSheet.create({
     textAlignVertical: 'top',
   },
   segmented: {
-    borderRadius: radius.sm,
+    borderRadius: radius.md,
+    borderWidth: StyleSheet.hairlineWidth,
     flexDirection: 'row',
     padding: 3,
   },
   segment: {
     alignItems: 'center',
-    borderRadius: 6,
+    borderRadius: radius.sm,
+    borderWidth: 1,
     flex: 1,
     minHeight: 34,
     justifyContent: 'center',
     paddingHorizontal: spacing.sm,
   },
   segmentText: {
-    fontSize: 13,
-    fontWeight: '700',
+    fontSize: 12,
+    fontWeight: '800',
   },
   row: {
     alignItems: 'center',
@@ -341,12 +552,13 @@ const styles = StyleSheet.create({
   },
   rowLabel: {
     flex: 1,
-    fontSize: 16,
-    fontWeight: '600',
+    fontSize: 15,
+    fontWeight: '700',
   },
   rowValue: {
     flex: 1,
-    fontSize: 14,
+    fontSize: 13,
+    lineHeight: 18,
     textAlign: 'right',
   },
   stateBox: {
@@ -356,7 +568,8 @@ const styles = StyleSheet.create({
     gap: spacing.md,
   },
   stateText: {
-    fontSize: 15,
+    fontSize: 14,
+    fontWeight: '700',
   },
   errorText: {
     fontSize: 15,
@@ -365,26 +578,37 @@ const styles = StyleSheet.create({
   thumb: {
     alignItems: 'center',
     aspectRatio: 0.72,
-    borderRadius: radius.sm,
+    borderRadius: radius.md,
+    borderWidth: StyleSheet.hairlineWidth,
     justifyContent: 'center',
     overflow: 'hidden',
     width: 82,
   },
   badge: {
     alignSelf: 'flex-start',
-    borderRadius: 999,
+    borderRadius: radius.sm,
+    borderWidth: StyleSheet.hairlineWidth,
+    maxWidth: '100%',
     paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.xs,
+    paddingVertical: 3,
   },
   badgeText: {
-    fontSize: 12,
-    fontWeight: '700',
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  sectionHeader: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: spacing.sm,
+    paddingHorizontal: spacing.xs,
+  },
+  sectionRule: {
+    height: 18,
+    width: 3,
   },
   sectionTitle: {
-    fontSize: 13,
-    fontWeight: '800',
-    marginLeft: spacing.xs,
-    textTransform: 'uppercase',
+    flex: 1,
+    fontSize: 18,
+    fontWeight: '900',
   },
 });
-
