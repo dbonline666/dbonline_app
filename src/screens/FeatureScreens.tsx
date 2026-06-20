@@ -1,10 +1,22 @@
 import React, {useEffect, useMemo, useState} from 'react';
-import {Alert, Text, View} from 'react-native';
+import {Alert, Pressable, StyleSheet, Text, View} from 'react-native';
+import {
+  ArrowDown,
+  ArrowUp,
+  Cloud,
+  Download,
+  ListOrdered,
+  Pause,
+  Play,
+  RefreshCw,
+  Trash2,
+} from 'lucide-react-native';
 import {NativeStackScreenProps} from '@react-navigation/native-stack';
 import {useNavigation} from '@react-navigation/native';
 import {NativeStackNavigationProp} from '@react-navigation/native-stack';
 import {useQuery} from '@tanstack/react-query';
 import {
+  Badge,
   Card,
   EmptyState,
   ErrorState,
@@ -967,9 +979,131 @@ export function SubscriptionsScreen() {
 }
 
 type DownloadMode = 'downloaders' | 'aria2' | 'qb' | 'thunder' | 'pan115';
+type TaskFilter = 'all' | 'downloading' | 'paused' | 'completed';
+type BadgeTone = 'neutral' | 'success' | 'warning' | 'danger' | 'info' | 'accent' | 'primary' | 'secondary';
+type IconComponent = React.ComponentType<{color?: string; size?: number; strokeWidth?: number}>;
+
+type NormalizedTask = {
+  record: Record<string, unknown>;
+  id: string;
+  title: string;
+  statusKey: string;
+  statusLabel: string;
+  progressRatio: number;
+  sizeBytes: number;
+  completedBytes: number;
+  downloadSpeedBytes: number;
+  uploadSpeedBytes: number;
+  savePath: string;
+  addedAt: unknown;
+  completedAt: unknown;
+  etaSeconds: number;
+  rawState: string;
+};
+
+const downloadModeOptions: Array<{label: string; value: DownloadMode}> = [
+  {label: '下载器', value: 'downloaders'},
+  {label: 'Aria2', value: 'aria2'},
+  {label: 'qB', value: 'qb'},
+  {label: '迅雷', value: 'thunder'},
+  {label: '115', value: 'pan115'},
+];
+
+const taskFilterOptions: Array<{label: string; value: TaskFilter}> = [
+  {label: '全部', value: 'all'},
+  {label: '下载中', value: 'downloading'},
+  {label: '暂停', value: 'paused'},
+  {label: '已完成', value: 'completed'},
+];
+
+const asRecord = (value: unknown): Record<string, unknown> =>
+  value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+
+const nestedRecord = (value: unknown, key: string) => {
+  const record = asRecord(value);
+  return asRecord(record[key]);
+};
+
+const firstArray = (payload: unknown, keys: string[]) => {
+  const record = asRecord(payload);
+  for (const key of keys) {
+    if (Array.isArray(record[key])) {
+      return record[key] as unknown[];
+    }
+  }
+  const data = nestedRecord(payload, 'data');
+  for (const key of keys) {
+    if (Array.isArray(data[key])) {
+      return data[key] as unknown[];
+    }
+  }
+  return extractList<unknown>(payload);
+};
+
+const extractDownloadItems = (payload: unknown, mode: DownloadMode) => {
+  if (mode === 'downloaders') {
+    return firstArray(payload, ['downloaders', 'items', 'list', 'results']);
+  }
+  if (mode === 'qb') {
+    return firstArray(payload, ['torrents', 'tasks', 'items', 'list', 'results']);
+  }
+  return firstArray(payload, ['tasks', 'items', 'list', 'results', 'records']);
+};
+
+const textFrom = (record: Record<string, unknown>, keys: string[], fallback = '') => {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === 'string' && value.trim()) {
+      return value.trim();
+    }
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return String(value);
+    }
+  }
+  return fallback;
+};
+
+const numericFrom = (record: Record<string, unknown>, keys: string[]) => {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return value;
+    }
+    if (typeof value === 'string' && value.trim()) {
+      const parsed = Number(value);
+      if (Number.isFinite(parsed)) {
+        return parsed;
+      }
+    }
+  }
+  return 0;
+};
+
+const clampRatio = (value: number) => {
+  if (!Number.isFinite(value)) {
+    return 0;
+  }
+  if (value < 0) {
+    return 0;
+  }
+  if (value > 1) {
+    return 1;
+  }
+  return value;
+};
+
+const fileName = (value: unknown) => {
+  const normalized = String(value || '').trim().replace(/\\/g, '/');
+  const parts = normalized.split('/').filter(Boolean);
+  return parts.length ? parts[parts.length - 1] : normalized;
+};
 
 const taskTitle = (record: Record<string, unknown>) =>
-  String(record.name || record.title || record.filename || record.hash || record.gid || record.id || '任务');
+  textFrom(record, ['name', 'title', 'filename', 'file_name']) ||
+  textFrom(asRecord(record.bittorrent), ['name']) ||
+  textFrom(asRecord(asRecord(record.bittorrent).info), ['name']) ||
+  fileName(asRecord(Array.isArray(record.files) ? record.files[0] : {}).path) ||
+  textFrom(record, ['hash', 'gid', 'id'], '任务');
 
 const taskId = (record: Record<string, unknown>, mode: DownloadMode) => {
   if (mode === 'aria2') {
@@ -978,17 +1112,78 @@ const taskId = (record: Record<string, unknown>, mode: DownloadMode) => {
   if (mode === 'qb') {
     return String(record.hash || record.id || '').trim();
   }
-  return String(record.id || '').trim();
+  return String(record.id || record.task_id || record.gid || record.hash || '').trim();
+};
+
+const taskStatusKey = (record: Record<string, unknown>) => {
+  const state = textFrom(record, ['status_key', 'statusKey', 'status', 'state', 'raw_status', 'rawState', 'phase']).toLowerCase();
+  if (!state) {
+    return 'unknown';
+  }
+  if (state.includes('error') || state.includes('fail') || state.includes('missing')) {
+    return 'error';
+  }
+  if (
+    state.includes('complete') ||
+    state.includes('done') ||
+    state.includes('success') ||
+    state.includes('upload') ||
+    state.includes('stalledup') ||
+    state.includes('queuedup') ||
+    state.includes('forcedup')
+  ) {
+    return 'completed';
+  }
+  if (state.includes('pause') || state.includes('stop')) {
+    return 'paused';
+  }
+  if (state.includes('wait') || state.includes('queue') || state.includes('stalled') || state.includes('check') || state.includes('meta')) {
+    return 'waiting';
+  }
+  if (state.includes('active') || state.includes('download') || state.includes('running') || state.includes('forceddl')) {
+    return 'downloading';
+  }
+  return 'unknown';
+};
+
+const taskStatusLabel = (statusKey: string, mode: DownloadMode) => {
+  if (mode === 'qb' && statusKey === 'paused') {
+    return '已停止';
+  }
+  switch (statusKey) {
+    case 'downloading':
+      return '下载中';
+    case 'waiting':
+      return '等待中';
+    case 'paused':
+      return '已暂停';
+    case 'completed':
+      return '已完成';
+    case 'error':
+      return '异常';
+    default:
+      return '未知';
+  }
+};
+
+const taskBadgeTone = (statusKey: string): BadgeTone => {
+  if (statusKey === 'completed') return 'success';
+  if (statusKey === 'downloading') return 'info';
+  if (statusKey === 'waiting') return 'warning';
+  if (statusKey === 'paused') return 'neutral';
+  if (statusKey === 'error') return 'danger';
+  return 'secondary';
 };
 
 const primaryTaskAction = (record: Record<string, unknown>, mode: DownloadMode) => {
-  const state = String(record.status_key || record.statusKey || record.status || record.state || '').toLowerCase();
+  const state = taskStatusKey(record);
   if (mode === 'qb') {
-    return state.startsWith('paused') || state.startsWith('stopped') ? 'resume' : 'pause';
+    if (state === 'paused') return 'resume';
+    if (state === 'downloading' || state === 'waiting' || state === 'completed') return 'pause';
   }
   if (mode === 'aria2') {
     if (state === 'paused') return 'resume';
-    if (state === 'active' || state === 'waiting' || state === 'downloading') return 'pause';
+    if (state === 'waiting' || state === 'downloading') return 'pause';
   }
   if (mode === 'thunder') {
     if (state === 'paused') return 'resume';
@@ -997,35 +1192,428 @@ const primaryTaskAction = (record: Record<string, unknown>, mode: DownloadMode) 
   return '';
 };
 
-function DownloadTaskList({mode, queryFn}: {mode: DownloadMode; queryFn: () => Promise<unknown>}) {
-  const {api} = useAppState();
-  const colors = useAppColors();
-  const query = useQuery({queryKey: ['download-tasks', mode], queryFn});
-  const items = extractList(query.data);
+const sizeBytes = (record: Record<string, unknown>) => {
+  const bytes = numericFrom(record, [
+    'sizeBytes',
+    'size_bytes',
+    'size',
+    'totalLength',
+    'total_length',
+    'total',
+    'file_size',
+    'fileSize',
+  ]);
+  if (bytes > 0) {
+    return bytes;
+  }
+  return numericFrom(record, ['size_mb', 'sizeMb']) * 1024 * 1024;
+};
 
-  const runAction = async (record: Record<string, unknown>, action: string) => {
-    const id = taskId(record, mode);
+const completedBytes = (record: Record<string, unknown>, size: number, progress: number) => {
+  const bytes = numericFrom(record, [
+    'completedBytes',
+    'completed_bytes',
+    'completedLength',
+    'completed_length',
+    'downloaded',
+    'downloaded_bytes',
+    'downloadedBytes',
+  ]);
+  if (bytes > 0) {
+    return bytes;
+  }
+  return size > 0 && progress > 0 ? Math.round(size * progress) : 0;
+};
+
+const progressRatio = (record: Record<string, unknown>, statusKey: string, size: number) => {
+  const raw = numericFrom(record, ['progressRatio', 'progress_ratio', 'progress', 'percent']);
+  if (raw > 0) {
+    return clampRatio(raw > 1 ? raw / 100 : raw);
+  }
+  const completed = numericFrom(record, ['completedBytes', 'completed_bytes', 'completedLength', 'completed_length', 'downloaded']);
+  if (size > 0 && completed > 0) {
+    return clampRatio(completed / size);
+  }
+  return statusKey === 'completed' ? 1 : 0;
+};
+
+const formatBytesValue = (bytes: number) => {
+  const value = Number(bytes || 0);
+  if (!Number.isFinite(value) || value <= 0) {
+    return '0 B';
+  }
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const exponent = Math.min(Math.floor(Math.log(value) / Math.log(1024)), units.length - 1);
+  const display = value / 1024 ** exponent;
+  const digits = exponent === 0 ? 0 : display >= 100 ? 0 : display >= 10 ? 1 : 2;
+  return `${display.toFixed(digits)} ${units[exponent]}`;
+};
+
+const formatSpeedValue = (bytes: number) => `${formatBytesValue(bytes)}/s`;
+
+const formatPercent = (ratio: number) => `${Math.round(clampRatio(ratio) * 100)}%`;
+
+const formatEta = (seconds: number) => {
+  const total = Math.floor(Number(seconds || 0));
+  if (!Number.isFinite(total) || total <= 0) {
+    return '未知';
+  }
+  const days = Math.floor(total / 86400);
+  const hours = Math.floor((total % 86400) / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const secs = total % 60;
+  const parts = [];
+  if (days) parts.push(`${days}d`);
+  if (hours || days) parts.push(`${hours}h`);
+  if (minutes || hours || days) parts.push(`${minutes}m`);
+  if (!days && parts.length < 2) parts.push(`${secs}s`);
+  return parts.join(' ');
+};
+
+const formatTimeValue = (value: unknown) => {
+  if (!value) {
+    return '未知';
+  }
+  const raw = typeof value === 'number' || typeof value === 'string' ? Number(value) : 0;
+  const timeValue =
+    Number.isFinite(raw) && raw > 0
+      ? raw > 100000000000
+        ? raw
+        : raw > 1000000000
+          ? raw * 1000
+          : 0
+      : 0;
+  const date = timeValue > 0 ? new Date(timeValue) : new Date(String(value));
+  if (Number.isNaN(date.getTime())) {
+    return '未知';
+  }
+  return date.toLocaleString();
+};
+
+const normalizeTask = (item: unknown, mode: DownloadMode): NormalizedTask => {
+  const record = asRecord(item);
+  const statusKey = taskStatusKey(record);
+  const size = sizeBytes(record);
+  const progress = progressRatio(record, statusKey, size);
+  const completed = completedBytes(record, size, progress);
+  const downloadSpeed = numericFrom(record, ['downloadSpeedBytes', 'download_speed_bytes', 'downloadSpeed', 'download_speed', 'dlspeed', 'speed']);
+  return {
+    record,
+    id: taskId(record, mode),
+    title: taskTitle(record),
+    statusKey,
+    statusLabel: taskStatusLabel(statusKey, mode),
+    progressRatio: progress,
+    sizeBytes: size,
+    completedBytes: completed,
+    downloadSpeedBytes: downloadSpeed,
+    uploadSpeedBytes: numericFrom(record, ['uploadSpeedBytes', 'upload_speed_bytes', 'uploadSpeed', 'upload_speed', 'upspeed']),
+    savePath: textFrom(record, ['savePath', 'save_path', 'dir', 'path', 'download_path'], '-'),
+    addedAt: record.addedAt || record.added_at || record.added_on || record.created_at || record.create_time,
+    completedAt: record.completedAt || record.completed_at || record.completion_on || record.finished_at,
+    etaSeconds:
+      numericFrom(record, ['etaSeconds', 'eta_seconds', 'eta', 'remaining_time', 'remainingTime']) ||
+      (downloadSpeed > 0 ? Math.ceil(Math.max(0, size - completed) / downloadSpeed) : 0),
+    rawState: textFrom(record, ['state', 'status', 'raw_status', 'rawState', 'phase']),
+  };
+};
+
+const matchesTaskFilter = (task: NormalizedTask, filter: TaskFilter) => {
+  if (filter === 'all') {
+    return true;
+  }
+  if (filter === 'downloading') {
+    return task.statusKey === 'downloading' || task.statusKey === 'waiting';
+  }
+  if (filter === 'paused') {
+    return task.statusKey === 'paused';
+  }
+  return task.statusKey === 'completed';
+};
+
+function HeaderAction({label, onPress, spinning = false}: {label: string; onPress: () => void; spinning?: boolean}) {
+  const colors = useAppColors();
+  return (
+    <Pressable accessibilityRole="button" onPress={onPress} style={[downloadStyles.headerAction, {borderColor: colors.panelBorder}]}>
+      <RefreshCw size={14} color={colors.primary} strokeWidth={2.2} />
+      <Text style={[downloadStyles.headerActionText, {color: colors.primary}]}>{spinning ? '刷新中' : label}</Text>
+    </Pressable>
+  );
+}
+
+function StatTile({label, value, tone = 'neutral'}: {label: string; value: string; tone?: BadgeTone}) {
+  const colors = useAppColors();
+  const toneColor =
+    tone === 'success'
+      ? colors.success
+      : tone === 'warning'
+        ? colors.warning
+        : tone === 'danger'
+          ? colors.danger
+          : tone === 'info'
+            ? colors.primary
+            : colors.secondaryText;
+  return (
+    <View style={[downloadStyles.statTile, {borderColor: colors.panelBorder, backgroundColor: colors.inputBg}]}>
+      <Text style={[downloadStyles.statLabel, {color: colors.mutedText}]}>{label}</Text>
+      <Text style={[downloadStyles.statValue, {color: toneColor}]} numberOfLines={1}>
+        {value}
+      </Text>
+    </View>
+  );
+}
+
+function StatusDot({statusKey}: {statusKey: string}) {
+  const colors = useAppColors();
+  const backgroundColor =
+    statusKey === 'downloading'
+      ? colors.primary
+      : statusKey === 'waiting'
+        ? colors.warning
+        : statusKey === 'paused'
+          ? colors.secondaryText
+          : statusKey === 'completed'
+            ? colors.success
+            : statusKey === 'error'
+              ? colors.danger
+              : colors.mutedText;
+  return <View style={[downloadStyles.statusDot, {backgroundColor, shadowColor: backgroundColor}]} />;
+}
+
+function ProgressBar({ratio}: {ratio: number}) {
+  const colors = useAppColors();
+  return (
+    <View style={[downloadStyles.progressTrack, {backgroundColor: colors.inputBg, borderColor: colors.panelBorder}]}>
+      <View style={[downloadStyles.progressFill, {backgroundColor: colors.primary, width: `${Math.round(clampRatio(ratio) * 100)}%`}]} />
+    </View>
+  );
+}
+
+function TaskMetric({
+  icon: Icon,
+  label,
+  value,
+  tone = 'neutral',
+}: {
+  icon: IconComponent;
+  label: string;
+  value: string;
+  tone?: BadgeTone;
+}) {
+  const colors = useAppColors();
+  const iconColor =
+    tone === 'success'
+      ? colors.success
+      : tone === 'warning'
+        ? colors.warning
+        : tone === 'danger'
+          ? colors.danger
+          : tone === 'secondary'
+            ? colors.secondary
+            : colors.primary;
+  return (
+    <View style={[downloadStyles.metric, {borderColor: colors.panelBorder, backgroundColor: colors.inputBg}]}>
+      <View style={downloadStyles.metricHeader}>
+        <Icon size={13} color={iconColor} strokeWidth={2.2} />
+        <Text style={[downloadStyles.metricLabel, {color: colors.mutedText}]}>{label}</Text>
+      </View>
+      <Text style={[downloadStyles.metricValue, {color: colors.text}]} numberOfLines={2}>
+        {value}
+      </Text>
+    </View>
+  );
+}
+
+function RoundActionButton({
+  icon: Icon,
+  tone = 'primary',
+  onPress,
+  disabled,
+}: {
+  icon: IconComponent;
+  tone?: 'primary' | 'danger';
+  onPress: () => void;
+  disabled?: boolean;
+}) {
+  const colors = useAppColors();
+  const color = tone === 'danger' ? colors.danger : colors.primary;
+  const backgroundColor = tone === 'danger' ? colors.accentSoft : colors.primarySoft;
+  return (
+    <Pressable
+      accessibilityRole="button"
+      disabled={disabled}
+      onPress={onPress}
+      style={({pressed}) => [
+        downloadStyles.roundButton,
+        {
+          backgroundColor: pressed ? backgroundColor : colors.inputBg,
+          borderColor: color,
+          opacity: disabled ? 0.5 : 1,
+          shadowColor: color,
+        },
+      ]}>
+      <Icon size={15} color={color} strokeWidth={2.4} />
+    </Pressable>
+  );
+}
+
+function DownloadTaskCard({
+  task,
+  mode,
+  busy,
+  onAction,
+  onDelete,
+}: {
+  task: NormalizedTask;
+  mode: DownloadMode;
+  busy: boolean;
+  onAction: (task: NormalizedTask, action: string) => void;
+  onDelete: (task: NormalizedTask) => void;
+}) {
+  const colors = useAppColors();
+  const action = primaryTaskAction(task.record, mode);
+  const actionable = mode === 'aria2' || mode === 'qb' || mode === 'thunder';
+  const timeValue = task.statusKey === 'completed' ? formatTimeValue(task.completedAt) : formatEta(task.etaSeconds);
+  const timeLabel = task.statusKey === 'completed' ? '完成时间' : '剩余时间';
+
+  return (
+    <Card variant="strong" style={downloadStyles.taskCard}>
+      <View style={downloadStyles.taskHeader}>
+        <View style={downloadStyles.taskTitleWrap}>
+          <StatusDot statusKey={task.statusKey} />
+          <View style={downloadStyles.taskTitleTextWrap}>
+            <Text style={[downloadStyles.taskTitle, {color: colors.text}]} numberOfLines={2}>
+              {task.title}
+            </Text>
+            <View style={downloadStyles.badgeRow}>
+              <Badge label={task.statusLabel} tone={taskBadgeTone(task.statusKey)} />
+              {task.rawState ? <Badge label={task.rawState} tone="secondary" /> : null}
+            </View>
+          </View>
+        </View>
+        {actionable ? (
+          <View style={downloadStyles.taskActions}>
+            {action ? (
+              <RoundActionButton icon={action === 'resume' ? Play : Pause} disabled={busy} onPress={() => onAction(task, action)} />
+            ) : null}
+            <RoundActionButton icon={Trash2} tone="danger" disabled={busy} onPress={() => onDelete(task)} />
+          </View>
+        ) : null}
+      </View>
+
+      <View style={downloadStyles.progressBlock}>
+        <View style={downloadStyles.progressMeta}>
+          <Text style={[downloadStyles.progressText, {color: colors.text}]}>{formatPercent(task.progressRatio)}</Text>
+          <Text style={[downloadStyles.progressText, {color: colors.mutedText}]} numberOfLines={1}>
+            {formatBytesValue(task.completedBytes)} / {formatBytesValue(task.sizeBytes)}
+          </Text>
+        </View>
+        <ProgressBar ratio={task.progressRatio} />
+      </View>
+
+      <View style={downloadStyles.metricGrid}>
+        <TaskMetric icon={ArrowDown} label="下载速度" value={formatSpeedValue(task.downloadSpeedBytes)} />
+        <TaskMetric icon={ArrowUp} label="上传速度" value={formatSpeedValue(task.uploadSpeedBytes)} tone="secondary" />
+        <TaskMetric icon={ListOrdered} label={timeLabel} value={timeValue} tone={task.statusKey === 'completed' ? 'success' : 'warning'} />
+        <TaskMetric icon={Download} label="保存路径" value={task.savePath || '-'} />
+      </View>
+    </Card>
+  );
+}
+
+function DownloaderInfoCard({item}: {item: unknown}) {
+  const colors = useAppColors();
+  const record = asRecord(item);
+  const name = textFrom(record, ['name', 'key', 'id'], '下载器');
+  const enabled = record.enabled === true || record.available === true || record.runtime_enabled === true;
+  const label = textFrom(record, ['label', 'display_name', 'title'], name);
+  const message = textFrom(record, ['message', 'status', 'description', 'error'], enabled ? '已启用，可接收下载任务' : '未启用或配置不可用');
+
+  return (
+    <Card variant="strong" style={downloadStyles.taskCard}>
+      <View style={downloadStyles.downloaderHeader}>
+        <View style={downloadStyles.taskTitleWrap}>
+          <StatusDot statusKey={enabled ? 'completed' : 'paused'} />
+          <View style={downloadStyles.taskTitleTextWrap}>
+            <Text style={[downloadStyles.taskTitle, {color: colors.text}]}>{label}</Text>
+            <Text style={[downloadStyles.downloaderName, {color: colors.mutedText}]}>{name}</Text>
+          </View>
+        </View>
+        <Badge label={enabled ? '已启用' : '未启用'} tone={enabled ? 'success' : 'neutral'} />
+      </View>
+      <Text style={[downloadStyles.downloaderMessage, {color: colors.secondaryText}]}>{message}</Text>
+    </Card>
+  );
+}
+
+function DownloadTaskList({
+  mode,
+  queryFn,
+}: {
+  mode: DownloadMode;
+  queryFn: (filter: TaskFilter) => Promise<unknown>;
+}) {
+  const {api} = useAppState();
+  const [filter, setFilter] = useState<TaskFilter>('all');
+  const [busyKey, setBusyKey] = useState('');
+  const query = useQuery({queryKey: ['download-tasks', mode, filter], queryFn: () => queryFn(filter)});
+  const items = extractDownloadItems(query.data, mode);
+  const tasks = useMemo(
+    () => items.map(item => normalizeTask(item, mode)).filter(task => task.id || task.title !== '任务'),
+    [items, mode],
+  );
+  const visibleTasks = mode === 'downloaders' ? tasks : tasks.filter(task => matchesTaskFilter(task, filter));
+  const totalDownloadSpeed = tasks.reduce((sum, task) => sum + task.downloadSpeedBytes, 0);
+  const totalUploadSpeed = tasks.reduce((sum, task) => sum + task.uploadSpeedBytes, 0);
+  const completedCount = tasks.filter(task => task.statusKey === 'completed').length;
+  const activeCount = tasks.filter(task => task.statusKey === 'downloading' || task.statusKey === 'waiting').length;
+  const enabledDownloaders = items.filter(item => {
+    const record = asRecord(item);
+    return record.enabled === true || record.available === true || record.runtime_enabled === true;
+  }).length;
+
+  const runAction = async (task: NormalizedTask, action: string, deleteFiles = false) => {
+    const id = task.id;
     if (!id) {
       Alert.alert('任务操作失败', '当前任务缺少 ID');
       return;
     }
 
+    const actionKey = `${mode}:${id}:${action}`;
+    setBusyKey(actionKey);
     try {
       if (mode === 'aria2') {
         await api.aria2Action({action, gid: id});
       } else if (mode === 'qb') {
-        await api.qbittorrentAction({action, hash: id, ...(action === 'delete' ? {delete_files: false} : {})});
+        await api.qbittorrentAction({action, hash: id, ...(action === 'delete' ? {delete_files: deleteFiles} : {})});
       } else if (mode === 'thunder') {
         await api.thunderAction({
           action,
           id,
-          type: String(record.type || 'user#download-url'),
+          type: String(task.record.type || 'user#download-url'),
         });
       }
       await query.refetch();
     } catch (error) {
       Alert.alert('任务操作失败', error instanceof Error ? error.message : '请求失败');
+    } finally {
+      setBusyKey('');
     }
+  };
+
+  const confirmDelete = (task: NormalizedTask) => {
+    const buttons =
+      mode === 'qb'
+        ? [
+            {text: '取消', style: 'cancel' as const},
+            {text: '仅删除任务', style: 'destructive' as const, onPress: () => runAction(task, 'delete', false)},
+            {text: '删除并清理文件', style: 'destructive' as const, onPress: () => runAction(task, 'delete', true)},
+          ]
+        : [
+            {text: '取消', style: 'cancel' as const},
+            {text: '删除任务', style: 'destructive' as const, onPress: () => runAction(task, 'delete', false)},
+          ];
+    Alert.alert('删除下载任务', task.title, buttons);
   };
 
   if (query.isLoading) {
@@ -1035,61 +1623,82 @@ function DownloadTaskList({mode, queryFn}: {mode: DownloadMode; queryFn: () => P
     return <ErrorState message={(query.error as Error).message} onRetry={() => query.refetch()} />;
   }
   if (!items.length) {
-    return <EmptyState />;
+    return (
+      <Card variant="cyber" title={mode === 'downloaders' ? '下载器状态' : '下载任务'}>
+        <EmptyState label={mode === 'downloaders' ? '暂无下载器配置' : '暂无下载任务'} />
+      </Card>
+    );
   }
 
   return (
-    <Screen>
-      {items.map((item, index) => {
-        const record = item as Record<string, unknown>;
-        const action = primaryTaskAction(record, mode);
-        const actionable = mode === 'aria2' || mode === 'qb' || mode === 'thunder';
-        return (
-          <Card key={taskId(record, mode) || index} title={taskTitle(record)}>
-            <Text style={{color: colors.mutedText, lineHeight: 22}}>{summarizeRecord(item)}</Text>
-            {actionable ? (
-              <View style={{flexDirection: 'row', flexWrap: 'wrap', gap: 18}}>
-                {action ? (
-                  <TextButton
-                    label={action === 'resume' ? '恢复' : '暂停'}
-                    onPress={() => runAction(record, action)}
-                  />
-                ) : null}
-                <TextButton label="删除任务" onPress={() => runAction(record, 'delete')} />
-              </View>
-            ) : null}
-          </Card>
-        );
-      })}
-    </Screen>
+    <View style={downloadStyles.listWrap}>
+      <Card
+        variant="cyber"
+        title={mode === 'downloaders' ? '下载器状态' : `${downloadModeOptions.find(option => option.value === mode)?.label || mode} 任务`}
+        action={<HeaderAction label="刷新" spinning={query.isFetching} onPress={() => void query.refetch()} />}>
+        {mode === 'downloaders' ? (
+          <View style={downloadStyles.statGrid}>
+            <StatTile label="已启用" value={`${enabledDownloaders}`} tone="success" />
+            <StatTile label="全部下载器" value={`${items.length}`} />
+          </View>
+        ) : (
+          <>
+            <View style={downloadStyles.statGrid}>
+              <StatTile label="任务数" value={`${tasks.length}`} />
+              <StatTile label="下载中" value={`${activeCount}`} tone="info" />
+              <StatTile label="已完成" value={`${completedCount}`} tone="success" />
+              <StatTile label="总下载" value={formatSpeedValue(totalDownloadSpeed)} tone="info" />
+              <StatTile label="总上传" value={formatSpeedValue(totalUploadSpeed)} tone="secondary" />
+            </View>
+            <SegmentedControl value={filter} onChange={setFilter} options={taskFilterOptions} />
+          </>
+        )}
+      </Card>
+
+      {mode === 'downloaders' ? (
+        items.map((item, index) => <DownloaderInfoCard key={String(asRecord(item).name || index)} item={item} />)
+      ) : visibleTasks.length ? (
+        visibleTasks.map(task => (
+          <DownloadTaskCard
+            key={`${mode}:${task.id || task.title}`}
+            task={task}
+            mode={mode}
+            busy={busyKey.startsWith(`${mode}:${task.id}:`)}
+            onAction={(selected, action) => void runAction(selected, action)}
+            onDelete={confirmDelete}
+          />
+        ))
+      ) : (
+        <Card variant="strong">
+          <EmptyState label="当前筛选下没有任务" />
+        </Card>
+      )}
+    </View>
   );
 }
 
 export function DownloadTasksScreen() {
   const {api} = useAppState();
+  const colors = useAppColors();
   const [mode, setMode] = useState<DownloadMode>('downloaders');
-  const queryMap: Record<DownloadMode, () => Promise<unknown>> = {
-    downloaders: () => api.getDownloaders(),
+  const queryMap: Record<DownloadMode, (filter: TaskFilter) => Promise<unknown>> = {
+    downloaders: () => api.getDownloaders({include_disabled: true}),
     aria2: api.aria2Tasks,
-    qb: () => api.qbittorrentTasks('all'),
+    qb: filter => api.qbittorrentTasks(filter === 'downloading' ? 'all' : filter),
     thunder: api.thunderTasks,
-    pan115: () => api.pan115Tasks(),
+    pan115: filter => api.pan115Tasks(filter, 1, 30),
   };
   return (
-    <Screen scroll={false} padded={false}>
-      <View style={{padding: 16}}>
-        <SegmentedControl
-          value={mode}
-          onChange={setMode}
-          options={[
-            {label: '下载器', value: 'downloaders'},
-            {label: 'Aria2', value: 'aria2'},
-            {label: 'qB', value: 'qb'},
-            {label: '迅雷', value: 'thunder'},
-            {label: '115', value: 'pan115'},
-          ]}
-        />
-      </View>
+    <Screen>
+      <Card variant="cyber" title="下载任务">
+        <View style={downloadStyles.screenTitleRow}>
+          <Download size={18} color={colors.primary} />
+          <Text style={[downloadStyles.screenHint, {color: colors.mutedText}]}>
+            查看各下载器实时队列，执行暂停、恢复和删除操作。
+          </Text>
+        </View>
+        <SegmentedControl value={mode} onChange={setMode} options={downloadModeOptions} />
+      </Card>
       <DownloadTaskList mode={mode} queryFn={queryMap[mode]} />
     </Screen>
   );
@@ -1097,6 +1706,7 @@ export function DownloadTasksScreen() {
 
 export function DownloadRecordsScreen() {
   const {api} = useAppState();
+  const colors = useAppColors();
   const records = useQuery({
     queryKey: ['download-records'],
     queryFn: () => api.getDownloadRecords({page: 1, page_size: 50}),
@@ -1109,17 +1719,234 @@ export function DownloadRecordsScreen() {
       Alert.alert('清理失败', error instanceof Error ? error.message : '请求失败');
     }
   };
+  const confirmClear = () => {
+    Alert.alert('清空下载记录', '确认清空所有下载记录？', [
+      {text: '取消', style: 'cancel'},
+      {text: '清空', style: 'destructive', onPress: () => void clear()},
+    ]);
+  };
+  const items = extractDownloadItems(records.data, 'pan115');
 
   return (
     <Screen>
-      <PrimaryButton label="清空记录" onPress={clear} tone="danger" />
+      <Card
+        variant="cyber"
+        title="下载记录"
+        action={<HeaderAction label="刷新" spinning={records.isFetching} onPress={() => void records.refetch()} />}>
+        <View style={downloadStyles.statGrid}>
+          <StatTile label="本页记录" value={`${items.length}`} />
+          <StatTile label="来源" value="后端记录" tone="info" />
+        </View>
+        <PrimaryButton label="清空记录" onPress={confirmClear} tone="danger" />
+      </Card>
       {records.isLoading ? <LoadingState /> : null}
       {records.error ? <ErrorState message={(records.error as Error).message} onRetry={() => records.refetch()} /> : null}
-      {extractList(records.data).map((item, index) => (
-        <Card key={index} title={`记录 ${index + 1}`}>
-          <Text>{summarizeRecord(item)}</Text>
-        </Card>
-      ))}
+      {!records.isLoading && !records.error && !items.length ? <EmptyState label="暂无下载记录" /> : null}
+      {items.map((item, index) => {
+        const record = asRecord(item);
+        const title = taskTitle(record) || `记录 ${index + 1}`;
+        const status = taskStatusKey(record);
+        return (
+          <Card key={String(record.id || record.code || record.url || index)} variant="strong" style={downloadStyles.taskCard}>
+            <View style={downloadStyles.taskHeader}>
+              <View style={downloadStyles.taskTitleWrap}>
+                <StatusDot statusKey={status} />
+                <View style={downloadStyles.taskTitleTextWrap}>
+                  <Text style={[downloadStyles.taskTitle, {color: colors.text}]} numberOfLines={2}>
+                    {title}
+                  </Text>
+                  <View style={downloadStyles.badgeRow}>
+                    <Badge label={taskStatusLabel(status, 'pan115')} tone={taskBadgeTone(status)} />
+                    {textFrom(record, ['downloader']) ? <Badge label={textFrom(record, ['downloader'])} tone="info" /> : null}
+                  </View>
+                </View>
+              </View>
+            </View>
+            <View style={downloadStyles.metricGrid}>
+              <TaskMetric icon={Download} label="番号/资源" value={textFrom(record, ['code', 'video_code', 'url'], '-')} />
+              <TaskMetric icon={Cloud} label="保存路径" value={textFrom(record, ['save_path', 'savePath', 'path'], '-')} />
+              <TaskMetric icon={ListOrdered} label="记录时间" value={formatTimeValue(record.created_at || record.createdAt || record.time)} tone="warning" />
+            </View>
+            <Text style={[downloadStyles.recordSummary, {color: colors.mutedText}]}>{summarizeRecord(item)}</Text>
+          </Card>
+        );
+      })}
     </Screen>
   );
 }
+
+const downloadStyles = StyleSheet.create({
+  badgeRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  downloaderHeader: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 12,
+    justifyContent: 'space-between',
+  },
+  downloaderMessage: {
+    fontSize: 13,
+    lineHeight: 20,
+  },
+  downloaderName: {
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  headerAction: {
+    alignItems: 'center',
+    borderRadius: 999,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: 6,
+    minHeight: 32,
+    paddingHorizontal: 11,
+  },
+  headerActionText: {
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  listWrap: {
+    gap: 14,
+  },
+  metric: {
+    borderRadius: 8,
+    borderWidth: StyleSheet.hairlineWidth,
+    flexBasis: '47%',
+    flexGrow: 1,
+    gap: 6,
+    minHeight: 68,
+    padding: 10,
+  },
+  metricGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+  },
+  metricHeader: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 6,
+  },
+  metricLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  metricValue: {
+    fontSize: 13,
+    fontWeight: '700',
+    lineHeight: 18,
+  },
+  progressBlock: {
+    gap: 7,
+  },
+  progressFill: {
+    borderRadius: 999,
+    height: '100%',
+  },
+  progressMeta: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 12,
+    justifyContent: 'space-between',
+  },
+  progressText: {
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  progressTrack: {
+    borderRadius: 999,
+    borderWidth: StyleSheet.hairlineWidth,
+    height: 8,
+    overflow: 'hidden',
+  },
+  recordSummary: {
+    fontSize: 12,
+    lineHeight: 19,
+  },
+  roundButton: {
+    alignItems: 'center',
+    borderRadius: 999,
+    borderWidth: 1,
+    height: 34,
+    justifyContent: 'center',
+    shadowOffset: {width: 0, height: 0},
+    shadowOpacity: 0.36,
+    shadowRadius: 10,
+    width: 34,
+  },
+  screenHint: {
+    flex: 1,
+    fontSize: 12,
+    fontWeight: '600',
+    lineHeight: 18,
+  },
+  screenTitleRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 10,
+  },
+  statGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+  },
+  statLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  statTile: {
+    borderRadius: 8,
+    borderWidth: StyleSheet.hairlineWidth,
+    flexBasis: '30%',
+    flexGrow: 1,
+    gap: 5,
+    minHeight: 58,
+    padding: 10,
+  },
+  statValue: {
+    fontSize: 17,
+    fontWeight: '900',
+  },
+  statusDot: {
+    borderRadius: 999,
+    height: 9,
+    shadowOffset: {width: 0, height: 0},
+    shadowOpacity: 0.8,
+    shadowRadius: 8,
+    width: 9,
+  },
+  taskActions: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  taskCard: {
+    gap: 14,
+  },
+  taskHeader: {
+    alignItems: 'flex-start',
+    flexDirection: 'row',
+    gap: 10,
+    justifyContent: 'space-between',
+  },
+  taskTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+    lineHeight: 21,
+  },
+  taskTitleTextWrap: {
+    flex: 1,
+    gap: 8,
+    minWidth: 0,
+  },
+  taskTitleWrap: {
+    alignItems: 'flex-start',
+    flex: 1,
+    flexDirection: 'row',
+    gap: 10,
+    minWidth: 0,
+    paddingTop: 3,
+  },
+});
