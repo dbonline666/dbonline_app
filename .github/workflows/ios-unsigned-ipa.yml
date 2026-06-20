@@ -6,6 +6,9 @@ on:
 env:
   NODE_VERSION: '24'
   RUBY_VERSION: '3.3.11'
+  LANG: en_US.UTF-8
+  LC_ALL: en_US.UTF-8
+  COCOAPODS_DISABLE_STATS: 'true'
 
 permissions:
   contents: read
@@ -48,22 +51,27 @@ jobs:
           set -euo pipefail
           rm -rf vendor/bundle .bundle/config
           bundle config set path vendor/bundle
+          bundle lock --update cocoapods xcodeproj activesupport concurrent-ruby
           bundle install --jobs 4 --retry 3
 
           POD_VERSION="$(bundle exec pod --version)"
           echo "CocoaPods ${POD_VERSION}"
+          ruby --version
+          bundle info cocoapods
+          bundle exec ruby -e 'puts "pod executable: #{Gem.bin_path("cocoapods", "pod")}"'
           if [ "${POD_VERSION}" != "1.16.2" ]; then
             echo "Expected CocoaPods 1.16.2, got ${POD_VERSION}" >&2
             exit 1
           fi
 
-          for attempt in 1 2; do
+          for attempt in 1 2 3; do
+            echo "pod install attempt ${attempt}"
             if bundle exec pod install --project-directory=ios --verbose --clean-install; then
               exit 0
             fi
 
             status="$?"
-            if [ "${attempt}" = "2" ]; then
+            if [ "${attempt}" = "3" ]; then
               exit "${status}"
             fi
 
