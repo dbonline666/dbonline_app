@@ -30,7 +30,7 @@ jobs:
           cache-dependency-path: pnpm-lock.yaml
 
       - name: Install JavaScript dependencies
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile --config.node-linker=hoisted
 
       - name: Setup Ruby
         uses: ruby/setup-ruby@v1
@@ -39,7 +39,9 @@ jobs:
           bundler-cache: true
 
       - name: Install CocoaPods
-        run: bundle exec pod install --project-directory=ios
+        run: |
+          bundle exec pod --version
+          bundle exec pod install --project-directory=ios
 
       - name: Build unsigned app
         shell: bash
