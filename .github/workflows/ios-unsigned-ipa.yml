@@ -5,7 +5,7 @@ on:
 
 env:
   NODE_VERSION: '24'
-  RUBY_VERSION: '3.3'
+  RUBY_VERSION: '3.3.11'
 
 permissions:
   contents: read
@@ -30,18 +30,40 @@ jobs:
           cache-dependency-path: pnpm-lock.yaml
 
       - name: Install JavaScript dependencies
-        run: pnpm install --frozen-lockfile --config.node-linker=hoisted
+        run: pnpm install --frozen-lockfile
 
       - name: Setup Ruby
         uses: ruby/setup-ruby@v1
         with:
           ruby-version: ${{ env.RUBY_VERSION }}
-          bundler-cache: true
 
       - name: Install CocoaPods
+        shell: bash
         run: |
-          bundle exec pod --version
-          bundle exec pod install --project-directory=ios
+          set -euo pipefail
+          bundle config set path vendor/bundle
+          bundle install --jobs 4 --retry 3
+
+          POD_VERSION="$(bundle exec pod --version)"
+          echo "CocoaPods ${POD_VERSION}"
+          if [ "${POD_VERSION}" != "1.16.2" ]; then
+            echo "Expected CocoaPods 1.16.2, got ${POD_VERSION}" >&2
+            exit 1
+          fi
+
+          for attempt in 1 2; do
+            if bundle exec pod install --project-directory=ios --verbose; then
+              exit 0
+            fi
+
+            status="$?"
+            if [ "${attempt}" = "2" ]; then
+              exit "${status}"
+            fi
+
+            rm -rf ios/Pods ios/Podfile.lock "$HOME/Library/Caches/CocoaPods"
+            bundle exec pod cache clean --all || true
+          done
 
       - name: Build unsigned app
         shell: bash
