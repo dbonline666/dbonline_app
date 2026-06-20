@@ -67,10 +67,11 @@ jobs:
           for attempt in 1 2 3; do
             echo "pod install attempt ${attempt}"
             if bundle exec pod install --project-directory=ios --verbose --clean-install; then
-              exit 0
+              break
+            else
+              status="$?"
             fi
 
-            status="$?"
             if [ "${attempt}" = "3" ]; then
               exit "${status}"
             fi
@@ -78,6 +79,12 @@ jobs:
             rm -rf ios/Pods ios/Podfile.lock "$HOME/Library/Caches/CocoaPods"
             bundle exec pod cache clean --all || true
           done
+
+          test -d ios/DBOnline.xcworkspace || {
+            echo "Missing ios/DBOnline.xcworkspace after pod install" >&2
+            find ios -maxdepth 2 \( -name "*.xcworkspace" -o -name "*.xcodeproj" \) -print >&2
+            exit 1
+          }
 
       - name: Build unsigned app
         shell: bash
