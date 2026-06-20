@@ -30,7 +30,12 @@ jobs:
           cache-dependency-path: pnpm-lock.yaml
 
       - name: Install JavaScript dependencies
-        run: pnpm install --frozen-lockfile
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm install --frozen-lockfile --config.node-linker=hoisted --config.package-import-method=copy
+          echo "node-linker=$(pnpm config get node-linker)"
+          echo "package-import-method=$(pnpm config get package-import-method)"
 
       - name: Setup Ruby
         uses: ruby/setup-ruby@v1
@@ -41,6 +46,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          rm -rf vendor/bundle .bundle/config
           bundle config set path vendor/bundle
           bundle install --jobs 4 --retry 3
 
@@ -52,7 +58,7 @@ jobs:
           fi
 
           for attempt in 1 2; do
-            if bundle exec pod install --project-directory=ios --verbose; then
+            if bundle exec pod install --project-directory=ios --verbose --clean-install; then
               exit 0
             fi
 
